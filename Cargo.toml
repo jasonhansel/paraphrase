@@ -1,0 +1,6 @@
+[package]
+name = "paraphrase"
+version = "0.1.0"
+authors = ["Jason Hansel <jason@jasonhansel.com>"]
+
+[dependencies]
