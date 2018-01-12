@@ -86,14 +86,23 @@ fn expand<'f>(values: Vec<Value<'f>>) -> Vec<Value<'f>> {
         if let Char(c) = val {
            if(c == scope.sigil) {
                 let mut part = String::new();
-                while let Some(&Char(c)) = iter.peek() {
-                    if !c.is_alphabetic() { break; }
-                    part.push(c);
+                let alp = iter.clone().take_while(|x| {
+                    if let &Char(c) = x {
+                        if c.is_alphabetic() {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                for a in alp {
+                    if let Char(c) = a { part.push(c); }
                     iter.next();
                 }
                 let id = Ident(&part[..]);
                 cmd_here = {
                     let ctree = cmd_here.next.as_ref().unwrap();
+                    println!("TEST {:?}", part);
                     ctree.get(&id).unwrap().clone()
                 }
             } else {
