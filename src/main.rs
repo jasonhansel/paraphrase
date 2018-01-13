@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, BTreeMap};
 use std::fs::File;
-use std::io::{Read, Error};
+use std::io::{Read, Error, Write};
 use std::result::Result;
 use std::borrow::BorrowMut;
 use std::ops::Deref; 
@@ -81,6 +81,8 @@ impl CommandTrie {
 }
 
 fn read_file(path: &str) -> Result<Vec<Value>, Error> {
+    println!("Reading...");
+    std::io::stdout().flush().unwrap();
     let mut x = String::new();
     File::open(path)?.read_to_string(&mut x)?;
     Ok(x.chars().map(|x| Value::Char(ValueChar(x))).collect())
@@ -107,8 +109,11 @@ fn expand_command(
     // TODO: 'early' expansion, expansion to chars
     if let Some(ref tree) = cmd_here.next {
        if tree.contains_key(&Param) {
-            let param = postwhite
-            .by_ref()
+               let npw = postwhite.collect::<Vec<Value>>();
+            println!("Seeking param {:?}", npw);
+            let param = npw
+                .clone()
+                .into_iter()
             .scan(0, |bal, x| {
                 *bal += match x {
                     Value::Char(ValueChar('(')) => 1,
@@ -125,16 +130,20 @@ fn expand_command(
             println!("PARAM {:?}", param);
             // todo: strip parens
             if param.len() > 0 {
-                *iter = ValueList(postwhite.skip(param.len()).collect());
+                *iter = ValueList(npw.into_iter().skip(param.len() + 1).collect());
                 return expand_command(iter,
                     tree.get(&Param).unwrap().clone(), scope);
+            } else {
+                panic!("Empty param {:?}", npw);
             }
         }
        // Allow '##X' etc.
        if let Some(&Value::Char(c)) = postwhite.peek() {
            if c == scope.sigil {
-                let cmd_name = postwhite
-                .by_ref()
+               let npw = postwhite.collect::<Vec<Value>>();
+                let cmd_name = npw
+                    .clone()
+                .into_iter()
                 .skip(1)
                 .take_while(|x| {
                     match x {
@@ -150,16 +159,23 @@ fn expand_command(
                         panic!("Err");
                     }
                 });
+                println!("SIGIL! {:?}", cmd_name);
                 if(cmd_name.len() > 0 && tree.contains_key(&Ident(cmd_name.clone()))) {
-                    *iter = ValueList(postwhite.skip(1 + cmd_name.len()).collect());
+                    *iter = ValueList(npw.into_iter().skip(1 + cmd_name.len()).collect());
                     // does string equality work as expected
                     return expand_command(iter,
                         tree.get(&Ident(cmd_name.clone())).unwrap().clone(), scope);
-                }
-            }
-        }
+                } 
+           } 
+       }
     }
-    // Here, should: handle semicolons and perform expansion...
+    match (iter, cmd_here.cmd.clone()) {
+        ( &mut ValueList(ref mut vl), Some(ValueClosure(_, ValueList(ref mut command))) ) => {
+            *vl = command.iter().chain(vl.iter()).cloned().collect::<Vec<Value>>();
+            println!("Done expanding...");
+        },
+        _ => { panic!("Failed :("); }
+    }
  
 }
 
@@ -170,6 +186,8 @@ fn expand_text(vals: &mut ValueList, scope: Scope) {
         Some((first, r)) => { 
             if let &Char(c) = first {
                 if c == scope.sigil {
+                    println!("Expanding command...");
+                    std::io::stdout().flush().unwrap();
                     // expand_command will expand *a* command (maybe not this one -- e.g.
                     // it could be an inner command in one of the arguments). But it will
                     // make progress.
@@ -178,6 +196,8 @@ fn expand_text(vals: &mut ValueList, scope: Scope) {
                     return;
                 }
             }
+            println!("Expanding rest...");
+            std::io::stdout().flush().unwrap();
             let mut rest = ValueList(r.iter().cloned().collect());
             {
                 let ValueList(ref mut rest_arr) = rest;
@@ -195,15 +215,18 @@ fn expand_text(vals: &mut ValueList, scope: Scope) {
 }
 
 fn expand(values: Vec<Value>) -> ValueList {
+    println!("Expand...");
+    std::io::stdout().flush().unwrap();
     let mut scope = Scope {
         sigil: ValueChar('#'),
         commands: Rc::new(CommandTrie::default())
     };
     // idea: source maps?
-    Rc::get_mut(&mut scope.commands)
-        .unwrap()
-        .insert(&(vec![ Ident("define".to_owned()), Param, Param, Param ])[..],
-        ValueClosure( scope.clone(), ValueList( vec! [Value::Char(ValueChar('a'))] ) )
+    // add 3rd param (;-kind)
+    Rc::get_mut(&mut scope.commands).unwrap().insert(&(vec![ Ident("define".to_owned()), Param, Param ])[..],
+        ValueClosure(
+            Rc::new(Scope { sigil: ValueChar('#'), commands: Rc::new(CommandTrie::default()) }),
+            ValueList( vec! [Value::Char(ValueChar('a'))] ) )
     );
     let mut vlist = ValueList(values);
     expand_text(&mut vlist, scope);
