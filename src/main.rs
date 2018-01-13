@@ -199,11 +199,11 @@ fn expand(values: Vec<Value>) -> ValueList {
         sigil: ValueChar('#'),
         commands: Rc::new(CommandTrie::default())
     };
-    let mut alt = Rc::new(scope.clone());
+    // idea: source maps?
     Rc::get_mut(&mut scope.commands)
         .unwrap()
         .insert(&(vec![ Ident("define".to_owned()), Param, Param, Param ])[..],
-        ValueClosure( alt, ValueList( vec! [Value::Char(ValueChar('a'))] ) )
+        ValueClosure( scope.clone(), ValueList( vec! [Value::Char(ValueChar('a'))] ) )
     );
     let mut vlist = ValueList(values);
     expand_text(&mut vlist, scope);
