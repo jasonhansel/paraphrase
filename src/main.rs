@@ -7,134 +7,202 @@ use std::result::Result;
 use std::borrow::BorrowMut;
 use std::ops::Deref; 
 use std::rc::Rc;
+use std::iter::Iterator;
+use std::borrow::Cow;
 
 #[derive(Copy, Clone, Debug)]
 enum Tag {
     Num
 }
 
-#[derive(Copy, Clone, Debug)]
-enum Value<'f> {
-    Char(char),
-    Str(&'f str),
-    TaggedStr(Tag, &'f str),
-    List(&'f Vec<Value<'f>>),
-    Closure(&'f Scope<'f>, &'f Vec<Value<'f>>)
+#[derive(Clone, Debug)]
+struct ValueList(Vec<Value>);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct ValueChar(char);
+
+// should closures "know" about their parameters?
+#[derive(Clone, Debug)]
+struct ValueClosure(Rc<Scope>, ValueList);
+
+#[derive(Clone, Debug)]
+enum Value {
+    Char(ValueChar),
+    List(ValueList),
+    Tagged(Tag, ValueList),
+    Closure(ValueClosure)
 }
+
+use Value::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-enum CommandPart<'f> {
-    Ident(&'f str),
+enum CommandPart {
+    Ident(String),
     Param
 }
+use CommandPart::*;
 
 #[derive(Clone, Debug, Default)]
-struct CommandTrie<'f> {
-    cmd: Option<Value<'f>>,
-    next: Option<HashMap<CommandPart<'f>, Rc<CommandTrie<'f>>>>
-}
-
-impl<'f> CommandTrie<'f> {
-    fn insert(&mut self, parts: &[CommandPart<'f>], cmd: Value<'f>) {
-        if(parts.len() == 0) {
-            self.cmd = Some(cmd);
-        } else {
-            match self.next {
-                None => { self.next = Some(HashMap::new()) },
-                _ => {}
-            };
-            let mut subtree = self.next.as_mut().unwrap();
-            let mut c = subtree.entry(parts[0].clone())
-                .or_insert(Rc::new(CommandTrie::default()));
-            Rc::make_mut(c).insert(&parts[1..], cmd);
-        }
-    }
+struct CommandTrie {
+    cmd: Option< ValueClosure >,
+    next: Option< HashMap<CommandPart, Rc<CommandTrie>> >
 }
 
 #[derive(Clone, Debug)]
-struct Scope<'f> {
-    sigil: char,
-    commands: CommandTrie<'f>
+struct Scope {
+    sigil: ValueChar,
+    commands: Rc<CommandTrie>
 }
 
-#[allow(unused_imports)]
-use Value::*;
-use CommandPart::*;
-
-fn read_file(path: &str) -> Result<Vec<Value>,Error> {
-    let mut x = "".to_owned();
-    File::open(path)?.read_to_string(&mut x)?;
-    Ok(x.chars().map(|x| Value::Char(x)).collect())
-}
-
-fn expand<'f>(values: Vec<Value<'f>>) -> Vec<Value<'f>> {
-    let mut scope = Scope {
-        sigil: '#',
-        commands: CommandTrie::default()
-    };
-    scope.commands.insert(&(vec![ Ident("define"), Param, Param, Param ])[..], Value::Char('a'));
-
-    let mut cmd_here : Rc<CommandTrie> = Rc::new(scope.commands);
-    let mut iter = values.into_iter().peekable();
-
-    let mut res = Vec::new();
-
-    // note - make sure recursive macro defs work
-    
-    while let Some(val) = iter.next() {
-        // really we should check cmd_here, then its parent, then its parent...or something
-        if let Char(c) = val {
-           if(c == scope.sigil) {
-                let mut part = String::new();
-                let alp = iter.clone().take_while(|x| {
-                    if let &Char(c) = x {
-                        if c.is_alphabetic() {
-                            return true;
-                        }
-                    }
-                    return false;
-                });
-                
-                for a in alp {
-                    if let Char(c) = a { part.push(c); }
-                    iter.next();
-                }
-                let id = Ident(&part[..]);
-                cmd_here = {
-                    let ctree = cmd_here.next.as_ref().unwrap();
-                    println!("TEST {:?}", part);
-                    ctree.get(&id).unwrap().clone()
-                }
-            } else {
-                res.push(Value::Char(c));
-            }
+impl CommandTrie {
+    fn insert(&mut self, parts: &[CommandPart], cmd: ValueClosure) {
+        if(parts.len() == 0) {
+            self.cmd = Some(cmd);
         } else {
-            panic!("Invalid state!");
+            let mut subtree : &mut HashMap<CommandPart, Rc<CommandTrie>> = match &mut self.next {
+                &mut None => { let n = HashMap::new(); self.next = Some(n); &mut n }
+                &mut Some(ref mut n) => n
+            };
+            let mut c = subtree.entry(parts[0].clone()).or_insert(Default::default());
+            c.insert(&parts[1..], cmd);
         }
     }
-    return res;
 }
 
+fn read_file(path: &str) -> Result<Vec<Value>, Error> {
+    let mut x = String::new();
+    File::open(path)?.read_to_string(&mut x)?;
+    Ok(x.chars().map(|x| Value::Char(ValueChar(x))).collect())
+}
 
-fn serialize(values: Vec<Value>) -> String {
-    let mut result = "".to_owned();
-
-
-    for val in values {
-        match val {
-            Char(x) => { result.push(x); },
-            Str(x) | TaggedStr(_, x) => { result.push_str(x); },
-            _ => {
-                panic!("Cannot serialize a list.");
+fn expand_command(
+    iter: &mut ValueList,
+    cmd_here : Rc<CommandTrie>,
+    scope: &Scope
+) {
+    // Allow nested macroexpansion (get order right -- 'inner first' for most params,
+    // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
+    // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
+   let &mut ValueList(values) = iter;
+   let mut postwhite = values
+        .into_iter()
+        .skip_while(|x| {
+            match x {
+                &Value::Char(ValueChar(c)) => c.is_whitespace(),
+                _ => false
+            }
+        })
+        .peekable();
+    // TODO: 'early' expansion, expansion to chars
+    if let Some(ref tree) = cmd_here.next {
+       if tree.contains_key(&Param) {
+            let param = postwhite
+            .by_ref()
+            .scan(0, |bal, x| {
+                *bal += match x {
+                    Value::Char(ValueChar('(')) => 1,
+                    Value::Char(ValueChar(')')) => -1,
+                    _ => 0
+                };
+                Some((*bal, x))
+            })
+            .take_while(|&(bal, x)| {
+                bal > 0
+            })
+            .map(|(bal, x)| { x })
+            .collect::<Vec<Value>>();
+            println!("PARAM {:?}", param);
+            // todo: strip parens
+            if param.len() > 0 {
+                *iter = ValueList(postwhite.skip(param.len()).collect());
+                return expand_command(iter,
+                    tree.get(&Param).unwrap().clone(), scope);
+            }
+        }
+       // Allow '##X' etc.
+       if let Some(&Value::Char(c)) = postwhite.peek() {
+           if c == scope.sigil {
+                let cmd_name = postwhite
+                .skip(1)
+                .take_while(|x| {
+                    match x {
+                        &Char(ValueChar(c)) => c.is_alphabetic(),
+                        _ => false
+                    }
+                })
+                .fold("".to_owned(), |s, x| {
+                    if let Char(ValueChar(c)) = x {
+                        s.push(c);
+                        return s;
+                    } else {
+                        panic!("Err");
+                    }
+                });
+                if(cmd_name.len() > 0 && tree.contains_key(&Ident(cmd_name))) {
+                    *iter = ValueList(postwhite.skip(1 + cmd_name.len()).collect());
+                    // does string equality work as expected
+                    return expand_command(iter,
+                        tree.get(&Ident(cmd_name)).unwrap().clone(), scope);
+                }
             }
         }
     }
-    result
+    // Here, should: handle semicolons and perform expansion...
+ 
 }
+
+fn expand_text(vals: &mut ValueList, scope: Scope) {
+    let &mut ValueList(ref mut values) = vals;
+    if values.len() == 0 {
+        // nothing to see here
+        return;
+    } else if let Char(c) = values[0] {
+        if c == scope.sigil {
+            // expand_command will expand *a* command (maybe not this one -- e.g.
+            // it could be an inner command in one of the arguments). But it will
+            // make progress.
+            expand_command(vals, scope.commands.clone(), &scope);
+            expand_text(vals, scope);
+            return;
+        }
+    }
+    let rest = values.clone();
+    rest.remove(0);
+    expand_text(&mut ValueList(rest), scope);
+    values.truncate(1);
+    values.extend(rest.into_iter());
+}
+
+fn expand(values: Vec<Value>) -> ValueList {
+    let mut scope = Scope {
+        sigil: ValueChar('#'),
+        commands: Rc::new(CommandTrie::default())
+    };
+    scope.commands.insert(&(vec![ Ident("define".to_owned()), Param, Param, Param ])[..],
+        ValueClosure( Rc::new(scope.clone()), ValueList( vec! [Value::Char(ValueChar('a'))] ) )
+    );
+    expand_text(&mut ValueList(values), scope);
+    ValueList(values)
+    // note - make sure recursive macro defs work
+}
+
+impl Value {
+    fn serialize(&self) -> Vec<char> {
+        match self {
+            &Char(ValueChar(ref x)) => vec![ *x ],
+            &Tagged(ref t, ref x) => Value::List(x.clone()).serialize(),
+            &List(ValueList(ref s)) => s.into_iter().flat_map(|x| { x.serialize() }).collect(),
+            &Closure(_) => { panic!("Cannot serialize closures."); }
+        }
+    }
+}
+
 
 #[test]
 fn it_works() {
-    assert_eq!(serialize(expand(read_file("tests/1-simple.pp").unwrap())), "Hello world!\n");
+    let chars = read_file("tests/1-simple.pp").unwrap();
+    let results = expand(chars);
+    assert_eq!(Value::List(results).serialize().iter().collect::<String>(), "Hello world!\n");
 }
 
 fn main() {
