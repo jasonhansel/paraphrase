@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{Read, Error, Write};
 use std::result::Result;
 use std::borrow::BorrowMut;
-use std::ops::Deref; 
+use std::ops::{Deref, Range};
 use std::rc::Rc;
 use std::iter::Iterator;
 use std::borrow::Cow;
@@ -88,6 +88,19 @@ fn read_file(path: &str) -> Result<Vec<Value>, Error> {
     Ok(x.chars().map(|x| Value::Char(ValueChar(x))).collect())
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ScanState {
+    Text,
+    Whitespace,
+    Parens(u8), // <- int gives parenlevel
+    Sigil,
+    CommandName,
+    Halt, // <- sigil inside of parameter
+    Start,
+    Semicolon
+}
+use ScanState::*;
+
 fn expand_command(
     iter: &mut ValueList,
     cmd_here : Rc<CommandTrie>,
@@ -98,6 +111,104 @@ fn expand_command(
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
 
     // tODO: this is all super slow, and has way too much copying
+
+    let &mut ValueList(ref x) = iter;
+    let test = x.clone()
+        .into_iter()
+        .enumerate()
+        .scan(ScanState::Text, |state, (idx, v)| {
+            let ch = match v {
+                Value::Char(ValueChar(c)) => Some(c),
+                _ => None
+            };
+            let ValueChar(sigil) = scope.sigil;
+            let is_white = ch.map(|c| c.is_whitespace()).unwrap_or(false);
+            *state = match( (*state, &v, ch) ) {
+                (Text, _, Some(c)) => {
+                    if c == sigil {
+                        Sigil
+                    } else {
+                        Text
+                    }
+                },
+                (Text, _, _) => { Text },
+
+                (Sigil, _, _) => { CommandName },
+                // todo write more tests
+                (CommandName,_, Some(';')) => { Semicolon },
+                (Whitespace, _, Some(';')) => { Semicolon },
+                (Semicolon, _, _) => { Semicolon }
+                (CommandName, _, Some('(')) => { Parens(0) },
+                (Whitespace, _, Some('(')) => { Parens(0) },
+                (Parens(x), _, Some('(')) => { Parens(x + 1) },
+                (Parens(0), _, Some(')')) => { Whitespace },
+                (Parens(x), _, Some(')')) => { Parens(x - 1) },
+                (Parens(x), _, w) => {
+                    if w == Some(sigil) {
+                        Halt
+                    } else {
+                        Parens(x)
+                    }
+                },
+
+                (Halt, _, _) => { Halt },
+
+                (CommandName, _, Some(c)) => {
+                    if c.is_alphabetic() {
+                        CommandName
+                    } else if c.is_whitespace() {
+                        Whitespace
+                    } else {
+                        Text
+                    }
+                },
+                (Whitespace, _, Some(c)) => {
+                    if c == sigil { Sigil }
+                    else if c.is_whitespace() { Whitespace }
+                    else { Text }
+                },
+
+                (Whitespace, _, None) => { Text }
+                (CommandName, _, None) => { Text }
+
+                _ => {
+                    panic!("Unhandled state change...");
+                }
+            };
+            Some((*state, v, idx))
+        })
+        .chain(std::iter::once((Halt, Value::Char(ValueChar(' ')), 0)))
+        .scan((vec! [], 0, 0, Start),
+        |&mut(ref mut vec, ref mut start, ref mut end, ref mut prev_state), (state, val, idx)| {
+            let matches = match(*prev_state, state) {
+                (Parens(x), Parens(y)) => { true }
+                (x, y) => { x == y }
+            };
+            let mut result = None;
+            if !matches {
+                *end = idx;
+                result = Some((*prev_state, vec.clone(), (*start..*end)));
+                *start = idx;
+                vec.clear();
+                *prev_state = state;
+            }
+            vec.push(val);
+            Some(result)
+        })
+        .flat_map(|x| { x })
+        .filter(|&(state, _, _)| {
+            state != Whitespace && state != Start && state != Sigil
+        })
+        .map(|(state, mut vals, mut range)| {
+            if let Parens(_) = state {
+                vals.remove(0);
+                range.start += 1;
+            }
+            (state, vals, range)
+        });
+                println!("HEY {:?}", test.collect::<Vec<(ScanState, Vec<Value>, Range<usize>)>>());
+    panic!("BYE");
+
    let mut postwhite = {
        let ValueList(values) = iter.clone();
        values.into_iter()
