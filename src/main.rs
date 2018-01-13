@@ -56,15 +56,26 @@ struct Scope {
 
 impl CommandTrie {
     fn insert(&mut self, parts: &[CommandPart], cmd: ValueClosure) {
-        if(parts.len() == 0) {
-            self.cmd = Some(cmd);
-        } else {
-            let mut subtree : &mut HashMap<CommandPart, Rc<CommandTrie>> = match &mut self.next {
-                &mut None => { let n = HashMap::new(); self.next = Some(n); &mut n }
-                &mut Some(ref mut n) => n
-            };
-            let mut c = subtree.entry(parts[0].clone()).or_insert(Default::default());
-            c.insert(&parts[1..], cmd);
+        match parts.split_first() {
+            None => { self.cmd = Some(cmd); }
+            Some((first, rest)) => {
+                let &mut CommandTrie{ ref mut next, .. } = self;
+                match next {
+                    &mut Some(_)  => {},
+                    &mut None => {
+                        *next = Some(HashMap::new());
+                    }
+                }
+                match next {
+                    &mut Some(ref mut subtree) => { 
+                        let data = subtree
+                            .entry(first.clone())
+                            .or_insert_with(|| { Rc::new(CommandTrie::default()) });
+                        Rc::get_mut(data).unwrap().insert(rest, cmd);
+                    },
+                    &mut None => { panic!("Err"); }
+                }
+           }
         }
     }
 }
@@ -83,16 +94,16 @@ fn expand_command(
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
-   let &mut ValueList(values) = iter;
-   let mut postwhite = values
-        .into_iter()
+   let mut postwhite = {
+       let ValueList(values) = iter.clone();
+       values.into_iter()
+    }
         .skip_while(|x| {
             match x {
                 &Value::Char(ValueChar(c)) => c.is_whitespace(),
                 _ => false
             }
-        })
-        .peekable();
+        }).peekable();
     // TODO: 'early' expansion, expansion to chars
     if let Some(ref tree) = cmd_here.next {
        if tree.contains_key(&Param) {
@@ -106,7 +117,7 @@ fn expand_command(
                 };
                 Some((*bal, x))
             })
-            .take_while(|&(bal, x)| {
+            .take_while(|&(bal, _)| {
                 bal > 0
             })
             .map(|(bal, x)| { x })
@@ -123,6 +134,7 @@ fn expand_command(
        if let Some(&Value::Char(c)) = postwhite.peek() {
            if c == scope.sigil {
                 let cmd_name = postwhite
+                .by_ref()
                 .skip(1)
                 .take_while(|x| {
                     match x {
@@ -130,7 +142,7 @@ fn expand_command(
                         _ => false
                     }
                 })
-                .fold("".to_owned(), |s, x| {
+                .fold("".to_owned(), |mut s, x| {
                     if let Char(ValueChar(c)) = x {
                         s.push(c);
                         return s;
@@ -138,11 +150,11 @@ fn expand_command(
                         panic!("Err");
                     }
                 });
-                if(cmd_name.len() > 0 && tree.contains_key(&Ident(cmd_name))) {
+                if(cmd_name.len() > 0 && tree.contains_key(&Ident(cmd_name.clone()))) {
                     *iter = ValueList(postwhite.skip(1 + cmd_name.len()).collect());
                     // does string equality work as expected
                     return expand_command(iter,
-                        tree.get(&Ident(cmd_name)).unwrap().clone(), scope);
+                        tree.get(&Ident(cmd_name.clone())).unwrap().clone(), scope);
                 }
             }
         }
@@ -152,25 +164,34 @@ fn expand_command(
 }
 
 fn expand_text(vals: &mut ValueList, scope: Scope) {
-    let &mut ValueList(ref mut values) = vals;
-    if values.len() == 0 {
-        // nothing to see here
-        return;
-    } else if let Char(c) = values[0] {
-        if c == scope.sigil {
-            // expand_command will expand *a* command (maybe not this one -- e.g.
-            // it could be an inner command in one of the arguments). But it will
-            // make progress.
-            expand_command(vals, scope.commands.clone(), &scope);
-            expand_text(vals, scope);
-            return;
+    let ValueList(ref mut values) = vals.clone();
+    match values.split_first() {
+        None => {},
+        Some((first, r)) => { 
+            if let &Char(c) = first {
+                if c == scope.sigil {
+                    // expand_command will expand *a* command (maybe not this one -- e.g.
+                    // it could be an inner command in one of the arguments). But it will
+                    // make progress.
+                    expand_command(vals, scope.commands.clone(), &scope);
+                    expand_text(vals, scope);
+                    return;
+                }
+            }
+            let mut rest = ValueList(r.iter().cloned().collect());
+            {
+                let ValueList(ref mut rest_arr) = rest;
+                rest_arr.remove(0);
+            }
+            expand_text(&mut rest, scope);
+            {
+                let &mut ValueList(ref mut v) = vals;
+                let ValueList(rest_arr) = rest;
+                v.truncate(1);
+                v.extend(rest_arr);
+            }
         }
     }
-    let rest = values.clone();
-    rest.remove(0);
-    expand_text(&mut ValueList(rest), scope);
-    values.truncate(1);
-    values.extend(rest.into_iter());
 }
 
 fn expand(values: Vec<Value>) -> ValueList {
@@ -178,11 +199,15 @@ fn expand(values: Vec<Value>) -> ValueList {
         sigil: ValueChar('#'),
         commands: Rc::new(CommandTrie::default())
     };
-    scope.commands.insert(&(vec![ Ident("define".to_owned()), Param, Param, Param ])[..],
-        ValueClosure( Rc::new(scope.clone()), ValueList( vec! [Value::Char(ValueChar('a'))] ) )
+    let mut alt = Rc::new(scope.clone());
+    Rc::get_mut(&mut scope.commands)
+        .unwrap()
+        .insert(&(vec![ Ident("define".to_owned()), Param, Param, Param ])[..],
+        ValueClosure( alt, ValueList( vec! [Value::Char(ValueChar('a'))] ) )
     );
-    expand_text(&mut ValueList(values), scope);
-    ValueList(values)
+    let mut vlist = ValueList(values);
+    expand_text(&mut vlist, scope);
+    vlist
     // note - make sure recursive macro defs work
 }
 
