@@ -96,6 +96,8 @@ fn expand_command(
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
+
+    // tODO: this is all super slow, and has way too much copying
    let mut postwhite = {
        let ValueList(values) = iter.clone();
        values.into_iter()
