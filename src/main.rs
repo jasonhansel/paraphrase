@@ -58,7 +58,8 @@ struct Scope {
 
 impl ValueList {
     fn to_str(&self) -> String {
-        self.iter().map(|x| {
+        let &ValueList(ref list) = self;
+        list.iter().map(|x| {
             match(x) {
                 &Char(ValueChar(c)) => { c }
                 _ => { panic!() }
