@@ -109,10 +109,10 @@ fn part_for_scan(scan: ScanState, data: &ValueList) -> CommandPart {
     }
 }
 
-fn expand_command(
-    &ValueList(ref list): &ValueList,
-    scope: &Scope
-) -> ValueList {
+fn expand_command<'v, 's>(
+    values: &'v [Value],
+    scope: &'s Scope
+) -> (ValueList, &'v [Value]) {
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
@@ -245,6 +245,19 @@ fn expand_command(
     // ^ and enable parallelism if not a ;-command
     // ^ this may be impossible in the general case :(
 
+    let hpos = test.iter().position(|&(s, _, _)| { s == Halt }).map(|pos| { test[pos].2.start });
+    if let Some(halter) = hpos {
+        let ValueList(rest) = expand_command(&ValueList(list[halter..].to_vec()), scope);
+        return expand_command(
+            &ValueList(list[..halter]
+            .iter()
+            .chain(rest.iter())
+            .cloned()
+            .collect::<Vec<Value>>()),
+            &scope
+        );
+    }
+
     let pos = test.iter().position(|&(s, _, _)| { s == CommandName });
     match pos {
         None => {
@@ -257,21 +270,25 @@ fn expand_command(
                     test[p - 1].2.start
                 }
             };
-            let mut call = &test[pos..];
-            let mut parts = call.iter()
-                .map(|&(s, ref d, _)| { part_for_scan(s, d) }).collect::<Vec<CommandPart>>();
+            let mut parts = &test[pos..].iter()
+                .map(|&(s, ref d, _)| { part_for_scan(s, d) }).collect::<Vec<CommandPart>>()[..];
             // note - quadratic :(
+            println!("Scope {:?}", scope.commands);
             while !scope.commands.contains_key(
-                &parts
+                &parts.to_vec()
             ) {
-                call = &call.split_last().unwrap().1;
-                parts.pop();
-                if call.len() == 0 {
-                    panic!("Unrecognized call!");
+                if let Some((_, r)) = parts.split_last() {
+                    parts = r;
+                } else {
+                    break;
                 }
+           }
+            let mut call = &test[pos..(pos + parts.len())];
+            if parts.len() == 0 {
+                panic!("Failure {:?} {:?}", test, pos);
             }
 // nb: demo, test perf
-            let ValueList(expand_result) = match scope.commands.get(&parts).unwrap() {
+            let ValueList(expand_result) = match scope.commands.get(&parts.to_vec()).unwrap() {
                 &Command::User(ref args, ValueClosure(ref inner_scope, ref cmd_data)) => {
                     // todo handle args
                     expand_command(cmd_data, &inner_scope)
