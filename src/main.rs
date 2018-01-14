@@ -38,7 +38,8 @@ enum Value {
 #[derive(Clone, Debug)]
 enum Command {
     Define, // add otheres, eg. expand
-    User(Vec<String>, ValueClosure) // arg names
+    User(Vec<String>, ValueClosure), // arg names
+    UserHere(Vec<String>, ValueList) // TODO: clone UserHere's into User's
 }
 
 use Value::*;
@@ -87,6 +88,7 @@ enum ScanState {
     Halt, // <- sigil inside of parameter
     Start,
     End,
+    Semi,
     Semicolon
 }
 use ScanState::*;
@@ -140,10 +142,20 @@ fn expand_command(
 
             (Sigil, _, _) => { CommandName },
             // todo write more tests
-            (CommandName,_, Some(';')) => { Semicolon },
-            (Whitespace, _, Some(';')) => { Semicolon },
-            (CloseParen, _, Some(';')) => { Semicolon },
-            (Semicolon, _, _) => { Semicolon }
+            (CommandName,_, Some(';')) => { Semi },
+            (Whitespace, _, Some(';')) => { Semi },
+            (CloseParen, _, Some(';')) => { Semi },
+            (Semi, _, Some(c)) => {
+                if c.is_whitespace() {
+                    Semi
+                } else {
+                    Semicolon
+                }
+            }
+            (Semi, _, _)
+            | (Semicolon, _, _) => {
+                Semicolon
+            }
             (CommandName, _, Some('(')) => { Parens(0) },
             (Whitespace, _, Some('(')) => { Parens(0) },
             (CloseParen, _, Some('(')) => { Parens(0) },
@@ -157,6 +169,8 @@ fn expand_command(
                     Parens(x)
                 }
             },
+
+            // Should semicolons swallow whitespace?
 
             (Halt, _, _) => { Halt },
 
@@ -213,11 +227,11 @@ fn expand_command(
     })
     .flat_map(|x| { x })
     .filter(|&(state, _, _)| {
-        state != Whitespace && state != Start && state != Sigil && state != CloseParen
+        state != Whitespace && state != Start && state != Sigil && state != CloseParen && state != Semi
     })
     .map(|(state, mut vals, mut range)| {
         match state {
-            Parens(_) | Semicolon => {
+            Parens(_) => {
                 vals.remove(0);
                 range.start += 1;
             },
@@ -258,13 +272,17 @@ fn expand_command(
             }
 // nb: demo, test perf
             let ValueList(expand_result) = match scope.commands.get(&parts).unwrap() {
-                &Command::User(ref args, ValueClosure(ref scope, ref cmd_data)) => {
+                &Command::User(ref args, ValueClosure(ref inner_scope, ref cmd_data)) => {
+                    // todo handle args
+                    expand_command(cmd_data, &inner_scope)
+                },
+                &Command::UserHere(ref args, ref cmd_data) => {
                     // todo handle args
                     expand_command(cmd_data, &scope)
                 },
                 &Command::Define => {
                     // get arguments/name from param 1
-                    match (&call[1], &call[2], &call[3]) {
+                    return match (&call[1], &call[2], &call[3]) {
                         (
                             &(_, ref name_args, _),
                             &(_, ref command_text, _),
@@ -272,21 +290,23 @@ fn expand_command(
                         ) => {
                             // TODO: custom arguments, more tests
                             let id = vec![Ident(name_args.to_str())];
+                            // make_mut clones as nec.
                             let mut new_scope = scope.clone();
-                            new_scope.commands.insert(id,
-                                Command::User(vec![], ValueClosure(Rc::new(new_scope), command_text.clone() ))
-                            );
-                            expand_command(to_expand, &new_scope);
+                            // circular refs here?
+                            new_scope.commands.insert(id, Command::UserHere(vec![],
+                                // TODO: fix scpoe issues
+                                command_text.clone()
+                            ));
+                            expand_command(to_expand, &new_scope)
                         },
                         _ => {
                             panic!("Invalid state")
                         }
-                    };
-                    ValueList(vec![])
+                    }
                 }
             };
             let ValueList(remainder) = expand_command(
-                &ValueList( list[(call.last().unwrap().2.end + 1)..].to_vec() ),
+                &ValueList( list[(call.last().unwrap().2.end)..].to_vec() ),
                 scope
             );
            
@@ -369,13 +389,19 @@ fn expand(values: Vec<Value>) -> ValueList {
 }
 
 impl Value {
-    fn serialize(&self) -> Vec<char> {
-        match self {
-            &Char(ValueChar(ref x)) => vec![ *x ],
-            &Tagged(ref t, ref x) => Value::List(x.clone()).serialize(),
-            &List(ValueList(ref s)) => s.into_iter().flat_map(|x| { x.serialize() }).collect(),
-            &Closure(_) => { panic!("Cannot serialize closures."); }
-        }
+    fn serialize(self) -> ValueList {
+        ValueList(match self {
+            Char(ref x) => vec![ Char(*x) ],
+            Tagged(t, x) => {
+               let ValueList(vals) = Value::List(x).serialize();
+               vals
+            },
+            List(ValueList(s)) => s.into_iter().flat_map(|x| {
+                let ValueList(vals) = x.serialize();
+                vals
+            }).collect::<Vec<Value>>(),
+            Closure(_) => { panic!("Cannot serialize closures."); }
+        })
     }
 }
 
@@ -384,7 +410,9 @@ impl Value {
 fn it_works() {
     let chars = read_file("tests/1-simple.pp").unwrap();
     let results = expand(chars);
-    assert_eq!(Value::List(results).serialize().iter().collect::<String>(), "Hello world!\n");
+    let out = Value::List(results).serialize().to_str();
+    println!("{:?}", out);
+    assert_eq!(out, "Hello world!\n");
 }
 
 fn main() {

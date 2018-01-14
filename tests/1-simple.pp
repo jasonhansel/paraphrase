@@ -1,2 +1,1 @@
-#define(h)(hello);
-#h world
+#define(h)(Hello); #define(w)(world); #h #w!
