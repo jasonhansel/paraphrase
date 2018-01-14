@@ -1,2 +1,2 @@
 #define(h)(hello);
-#h
+#h world

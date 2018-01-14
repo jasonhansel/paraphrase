@@ -33,6 +33,14 @@ enum Value {
     Closure(ValueClosure)
 }
 
+// nb also write stdlib.
+
+#[derive(Clone, Debug)]
+enum Command {
+    Define, // add otheres, eg. expand
+    User(Vec<String>, ValueClosure) // arg names
+}
+
 use Value::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -42,41 +50,20 @@ enum CommandPart {
 }
 use CommandPart::*;
 
-#[derive(Clone, Debug, Default)]
-struct CommandTrie {
-    cmd: Option< ValueClosure >,
-    next: Option< HashMap<CommandPart, Rc<CommandTrie>> >
-}
-
 #[derive(Clone, Debug)]
 struct Scope {
     sigil: ValueChar,
-    commands: Rc<CommandTrie>
+    commands: HashMap<Vec<CommandPart>, Command>
 }
 
-impl CommandTrie {
-    fn insert(&mut self, parts: &[CommandPart], cmd: ValueClosure) {
-        match parts.split_first() {
-            None => { self.cmd = Some(cmd); }
-            Some((first, rest)) => {
-                let &mut CommandTrie{ ref mut next, .. } = self;
-                match next {
-                    &mut Some(_)  => {},
-                    &mut None => {
-                        *next = Some(HashMap::new());
-                    }
-                }
-                match next {
-                    &mut Some(ref mut subtree) => { 
-                        let data = subtree
-                            .entry(first.clone())
-                            .or_insert_with(|| { Rc::new(CommandTrie::default()) });
-                        Rc::get_mut(data).unwrap().insert(rest, cmd);
-                    },
-                    &mut None => { panic!("Err"); }
-                }
-           }
-        }
+impl ValueList {
+    fn to_str(&self) -> String {
+        self.iter().map(|x| {
+            match(x) {
+                &Char(ValueChar(c)) => { c }
+                _ => { panic!() }
+            }
+        }).collect::<String>()
     }
 }
 
@@ -95,193 +82,224 @@ enum ScanState {
     Parens(u8), // <- int gives parenlevel
     Sigil,
     CommandName,
+    CloseParen,
     Halt, // <- sigil inside of parameter
     Start,
+    End,
     Semicolon
 }
 use ScanState::*;
 
+
+fn part_for_scan(scan: ScanState, data: &ValueList) -> CommandPart {
+    match (scan, data) {
+        (CommandName, _) => {
+            Ident(data.to_str())
+        },
+        (Parens(0), _) => {
+           Param
+        },
+        (Semicolon, _) => {
+            Param
+        },
+        _ => Ident("INVALID".to_owned())
+    }
+}
+
 fn expand_command(
-    iter: &mut ValueList,
-    cmd_here : Rc<CommandTrie>,
+    &ValueList(ref list): &ValueList,
     scope: &Scope
-) {
+) -> ValueList {
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
 
     // tODO: this is all super slow, and has way too much copying
 
-    let &mut ValueList(ref x) = iter;
-    let test = x.clone()
-        .into_iter()
-        .enumerate()
-        .scan(ScanState::Text, |state, (idx, v)| {
-            let ch = match v {
-                Value::Char(ValueChar(c)) => Some(c),
-                _ => None
-            };
-            let ValueChar(sigil) = scope.sigil;
-            let is_white = ch.map(|c| c.is_whitespace()).unwrap_or(false);
-            *state = match( (*state, &v, ch) ) {
-                (Text, _, Some(c)) => {
-                    if c == sigil {
-                        Sigil
-                    } else {
-                        Text
-                    }
-                },
-                (Text, _, _) => { Text },
-
-                (Sigil, _, _) => { CommandName },
-                // todo write more tests
-                (CommandName,_, Some(';')) => { Semicolon },
-                (Whitespace, _, Some(';')) => { Semicolon },
-                (Semicolon, _, _) => { Semicolon }
-                (CommandName, _, Some('(')) => { Parens(0) },
-                (Whitespace, _, Some('(')) => { Parens(0) },
-                (Parens(x), _, Some('(')) => { Parens(x + 1) },
-                (Parens(0), _, Some(')')) => { Whitespace },
-                (Parens(x), _, Some(')')) => { Parens(x - 1) },
-                (Parens(x), _, w) => {
-                    if w == Some(sigil) {
-                        Halt
-                    } else {
-                        Parens(x)
-                    }
-                },
-
-                (Halt, _, _) => { Halt },
-
-                (CommandName, _, Some(c)) => {
-                    if c.is_alphabetic() {
-                        CommandName
-                    } else if c.is_whitespace() {
-                        Whitespace
-                    } else {
-                        Text
-                    }
-                },
-                (Whitespace, _, Some(c)) => {
-                    if c == sigil { Sigil }
-                    else if c.is_whitespace() { Whitespace }
-                    else { Text }
-                },
-
-                (Whitespace, _, None) => { Text }
-                (CommandName, _, None) => { Text }
-
-                _ => {
-                    panic!("Unhandled state change...");
+    let test = list
+    .clone()
+    .into_iter()
+    .enumerate()
+    .scan(ScanState::Text, |state, (idx, v)| {
+        let ch = match v {
+            Value::Char(ValueChar(c)) => Some(c),
+            _ => None
+        };
+        let ValueChar(sigil) = scope.sigil;
+        let is_white = ch.map(|c| c.is_whitespace()).unwrap_or(false);
+        *state = match( (*state, &v, ch) ) {
+            (Text, _, Some(c)) => {
+                if c == sigil {
+                    Sigil
+                } else {
+                    Text
                 }
-            };
-            Some((*state, v, idx))
-        })
-        .chain(std::iter::once((Halt, Value::Char(ValueChar(' ')), 0)))
-        .scan((vec! [], 0, 0, Start),
-        |&mut(ref mut vec, ref mut start, ref mut end, ref mut prev_state), (state, val, idx)| {
-            let matches = match(*prev_state, state) {
-                (Parens(x), Parens(y)) => { true }
-                (x, y) => { x == y }
-            };
-            let mut result = None;
-            if !matches {
-                *end = idx;
-                result = Some((*prev_state, vec.clone(), (*start..*end)));
-                *start = idx;
-                vec.clear();
-                *prev_state = state;
+            },
+            (Text, _, _) => { Text },
+
+            (Sigil, _, _) => { CommandName },
+            // todo write more tests
+            (CommandName,_, Some(';')) => { Semicolon },
+            (Whitespace, _, Some(';')) => { Semicolon },
+            (CloseParen, _, Some(';')) => { Semicolon },
+            (Semicolon, _, _) => { Semicolon }
+            (CommandName, _, Some('(')) => { Parens(0) },
+            (Whitespace, _, Some('(')) => { Parens(0) },
+            (CloseParen, _, Some('(')) => { Parens(0) },
+            (Parens(x), _, Some('(')) => { Parens(x + 1) },
+            (Parens(0), _, Some(')')) => { CloseParen },
+            (Parens(x), _, Some(')')) => { Parens(x - 1) },
+            (Parens(x), _, w) => {
+                if w == Some(sigil) {
+                    Halt
+                } else {
+                    Parens(x)
+                }
+            },
+
+            (Halt, _, _) => { Halt },
+
+            (CommandName, _, Some(c)) => {
+                if c.is_alphabetic() {
+                    CommandName
+                } else if c.is_whitespace() {
+                    Whitespace
+                } else {
+                    Text
+                }
+            },
+            (Whitespace, _, Some(c))
+            | (CloseParen, _, Some(c)) => {
+                if c == sigil { Sigil }
+                else if c.is_whitespace() { Whitespace }
+                else { Text }
+            },
+
+            (Whitespace, _, None) => { Text }
+            (CloseParen, _, None) => { Text }
+            (CommandName, _, None) => { Text }
+
+            _ => {
+                panic!("Unhandled state change...");
             }
+        };
+        Some((*state, v, idx))
+    })
+    .chain(std::iter::once((End, Value::Char(ValueChar(' ')), 0)))
+    .scan((vec! [], 0, 0, Start),
+    |&mut(ref mut vec, ref mut start, ref mut end, ref mut prev_state), (state, val, idx)| {
+        if *prev_state == End {
+            return None;
+        }
+        let matches = match(*prev_state, state) {
+            (Parens(x), Parens(y)) => { true }
+            (x, y) => { x == y }
+        };
+        let mut result = None;
+        if state != End {
+            *end = idx;
+        }
+        if !matches {
+            result = Some((*prev_state, vec.clone(), (*start..*end)));
+            *start = idx;
+            vec.clear();
+            *prev_state = state;
+        }
+        if state != End {
             vec.push(val);
-            Some(result)
-        })
-        .flat_map(|x| { x })
-        .filter(|&(state, _, _)| {
-            state != Whitespace && state != Start && state != Sigil
-        })
-        .map(|(state, mut vals, mut range)| {
-            if let Parens(_) = state {
+        }
+        Some(result)
+    })
+    .flat_map(|x| { x })
+    .filter(|&(state, _, _)| {
+        state != Whitespace && state != Start && state != Sigil && state != CloseParen
+    })
+    .map(|(state, mut vals, mut range)| {
+        match state {
+            Parens(_) | Semicolon => {
                 vals.remove(0);
                 range.start += 1;
-            }
-            (state, vals, range)
-        });
-                println!("HEY {:?}", test.collect::<Vec<(ScanState, Vec<Value>, Range<usize>)>>());
-    panic!("BYE");
-
-   let mut postwhite = {
-       let ValueList(values) = iter.clone();
-       values.into_iter()
-    }
-        .skip_while(|x| {
-            match x {
-                &Value::Char(ValueChar(c)) => c.is_whitespace(),
-                _ => false
-            }
-        }).peekable();
-    // TODO: 'early' expansion, expansion to chars
-    if let Some(ref tree) = cmd_here.next {
-       if tree.contains_key(&Param) {
-               let npw = postwhite.collect::<Vec<Value>>();
-            println!("Seeking param {:?}", npw);
-            let param = npw
-                .clone()
-                .into_iter()
-            .scan(0, |bal, x| {
-                *bal += match x {
-                    Value::Char(ValueChar('(')) => 1,
-                    Value::Char(ValueChar(')')) => -1,
-                    _ => 0
-                };
-                Some((*bal, x))
-            })
-            .take_while(|&(bal, _)| {
-                bal > 0
-            })
-            .map(|(bal, x)| { x })
-            .collect::<Vec<Value>>();
-            println!("PARAM {:?}", param);
-            // todo: strip parens
-            if param.len() > 0 {
-                *iter = ValueList(npw.into_iter().skip(param.len() + 1).collect());
-                return expand_command(iter,
-                    tree.get(&Param).unwrap().clone(), scope);
-            } else {
-                panic!("Empty param {:?}", npw);
-            }
+            },
+            _ => {}
         }
-       // Allow '##X' etc.
-       if let Some(&Value::Char(c)) = postwhite.peek() {
-           if c == scope.sigil {
-               let npw = postwhite.collect::<Vec<Value>>();
-                let cmd_name = npw
-                    .clone()
-                .into_iter()
-                .skip(1)
-                .take_while(|x| {
-                    match x {
-                        &Char(ValueChar(c)) => c.is_alphabetic(),
-                        _ => false
-                    }
-                })
-                .fold("".to_owned(), |mut s, x| {
-                    if let Char(ValueChar(c)) = x {
-                        s.push(c);
-                        return s;
-                    } else {
-                        panic!("Err");
-                    }
-                });
-                println!("SIGIL! {:?}", cmd_name);
-                if(cmd_name.len() > 0 && tree.contains_key(&Ident(cmd_name.clone()))) {
-                    *iter = ValueList(npw.into_iter().skip(1 + cmd_name.len()).collect());
-                    // does string equality work as expected
-                    return expand_command(iter,
-                        tree.get(&Ident(cmd_name.clone())).unwrap().clone(), scope);
-                } 
-           } 
-       }
+       (state, ValueList(vals), range)
+    })
+    .collect::<Vec<(ScanState, ValueList, Range<usize>)>>();
+
+    // note -- only Halt if we're sure it's in the current invocation?
+    // ^ and enable parallelism if not a ;-command
+    // ^ this may be impossible in the general case :(
+
+    let pos = test.iter().position(|&(s, _, _)| { s == CommandName });
+    match pos {
+        None => {
+            ValueList(list.clone())
+        }
+        Some(pos) => {
+            let idxpos = match pos {
+                0 => 0,
+                p => {
+                    test[p - 1].2.start
+                }
+            };
+            let mut call = &test[pos..];
+            let mut parts = call.iter()
+                .map(|&(s, ref d, _)| { part_for_scan(s, d) }).collect::<Vec<CommandPart>>();
+            // note - quadratic :(
+            while !scope.commands.contains_key(
+                &parts
+            ) {
+                call = &call.split_last().unwrap().1;
+                parts.pop();
+                if call.len() == 0 {
+                    panic!("Unrecognized call!");
+                }
+            }
+// nb: demo, test perf
+            let ValueList(expand_result) = match scope.commands.get(&parts).unwrap() {
+                &Command::User(ref args, ValueClosure(ref scope, ref cmd_data)) => {
+                    // todo handle args
+                    expand_command(cmd_data, &scope)
+                },
+                &Command::Define => {
+                    // get arguments/name from param 1
+                    match (&call[1], &call[2], &call[3]) {
+                        (
+                            &(_, ref name_args, _),
+                            &(_, ref command_text, _),
+                            &(_, ref to_expand, _)
+                        ) => {
+                            // TODO: custom arguments, more tests
+                            let id = vec![Ident(name_args.to_str())];
+                            let mut new_scope = scope.clone();
+                            new_scope.commands.insert(id,
+                                Command::User(vec![], ValueClosure(Rc::new(new_scope), command_text.clone() ))
+                            );
+                            expand_command(to_expand, &new_scope);
+                        },
+                        _ => {
+                            panic!("Invalid state")
+                        }
+                    };
+                    ValueList(vec![])
+                }
+            };
+            let ValueList(remainder) = expand_command(
+                &ValueList( list[(call.last().unwrap().2.end + 1)..].to_vec() ),
+                scope
+            );
+           
+            // TODO: actual expansion here
+            let result = list[..pos].iter()
+            .chain(expand_result.iter())
+            .chain(remainder.iter())
+            .cloned()
+            .collect::<Vec<Value>>();
+            ValueList(result)
+
+        }
     }
+/*
     match (iter, cmd_here.cmd.clone()) {
         ( &mut ValueList(ref mut vl), Some(ValueClosure(_, ValueList(ref mut command))) ) => {
             *vl = command.iter().chain(vl.iter()).cloned().collect::<Vec<Value>>();
@@ -289,10 +307,13 @@ fn expand_command(
         },
         _ => { panic!("Failed :("); }
     }
- 
+ */
 }
 
 fn expand_text(vals: &mut ValueList, scope: Scope) {
+    *vals = expand_command(vals, &scope);
+/*
+
     let ValueList(ref mut values) = vals.clone();
     match values.split_first() {
         None => {},
@@ -304,7 +325,7 @@ fn expand_text(vals: &mut ValueList, scope: Scope) {
                     // expand_command will expand *a* command (maybe not this one -- e.g.
                     // it could be an inner command in one of the arguments). But it will
                     // make progress.
-                    expand_command(vals, scope.commands.clone(), &scope);
+                    expand_command(vals, &scope);
                     expand_text(vals, scope);
                     return;
                 }
@@ -325,6 +346,7 @@ fn expand_text(vals: &mut ValueList, scope: Scope) {
             }
         }
     }
+*/
 }
 
 fn expand(values: Vec<Value>) -> ValueList {
@@ -332,14 +354,12 @@ fn expand(values: Vec<Value>) -> ValueList {
     std::io::stdout().flush().unwrap();
     let mut scope = Scope {
         sigil: ValueChar('#'),
-        commands: Rc::new(CommandTrie::default())
+        commands: HashMap::new()
     };
     // idea: source maps?
     // add 3rd param (;-kind)
-    Rc::get_mut(&mut scope.commands).unwrap().insert(&(vec![ Ident("define".to_owned()), Param, Param ])[..],
-        ValueClosure(
-            Rc::new(Scope { sigil: ValueChar('#'), commands: Rc::new(CommandTrie::default()) }),
-            ValueList( vec! [Value::Char(ValueChar('a'))] ) )
+    scope.commands.insert(vec![ Ident("define".to_owned()), Param, Param, Param ],
+        Command::Define
     );
     let mut vlist = ValueList(values);
     expand_text(&mut vlist, scope);
