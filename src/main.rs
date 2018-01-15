@@ -422,16 +422,16 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                     .enumerate()
                     .skip(pos)
                     .by_ref()
-                    .flat_map(|(idx, &(s, r))| {
+                    .flat_map(|(idx, &(ref s, ref r))| {
                         println!("Part {:?} {:?}", s, r);
-                        match part_for_scan(s, &ValueList(values[r.clone()].to_vec())) {
+                        match part_for_scan(*s, &ValueList(values[r.clone()].to_vec())) {
                             Some(x) => Some((idx, x)),
                             _ => None
                         }
                     }).collect::<Vec<(usize, CommandPart)>>();
                 // note - quadratic :(
                 let oldparts = parts.clone();
-                while { !scope.commands.contains_key(&parts.iter().map(|&(i, x)| { x }).collect())
+                while { !scope.commands.contains_key(&parts.iter().map(|&(ref i, ref x)| { x }).cloned().collect::<Vec<CommandPart>>())
                     && parts.pop() != None  } {
                     }
                 if parts.len() == 0 {
@@ -441,10 +441,9 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                 // nb: unwrap responses from ;-commands
     // nb: demo, parsed perf
                 // type coerce args and retvals
-                let args = parsed
+                let pos_end = parts.last().unwrap().0;
+                let args = parsed[(parts.first().unwrap().0)..(parts.last().unwrap().0 + 1)]
                     .iter()
-                    .skip(pos)
-                    .take(parts.last().unwrap().0 - pos)
                     .flat_map(|&(ref state, ref range)| {
                         let vals = &values[range.clone()];
                         match *state {
@@ -455,24 +454,19 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                         }
                     }).collect::<Vec<Value>>();
                 println!("PARTS {:?}", parts);
-                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().map(|&(i, x)|{ x}).collect()).unwrap(), args, scope.clone());
+                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().map(|&(ref i, ref x)|{ x}).cloned().collect::<Vec<CommandPart>>()).unwrap(), args, scope.clone());
                               
                 // TODO: actual expansion here; subtract 1 to avoid sigil
                 let result = values
                 .iter()
-                .take(parsed[pos].1.start - 1)
+                .take(parsed[parts.first().unwrap().0].1.start)
                 .chain(expand_result.iter())
                 .cloned()
                 .collect::<Vec<Value>>();
 
-                let end = if (pos + parts.len()) == parsed.len() {
-                    // todo handle whitespace properly
-                    println!("Endless wings!"); 
-                    ValueList(vec![])
-                } else {
+                let end = {
                     println!("RANGE {:?} {:?} {:?}", parsed, pos, parts.len());
-                    let range = parsed[pos + parts.len() - 1].1.clone();
-                    let rest = values.clone().split_off(range.end + 1);
+                    let rest = values.clone().split_off(parsed[parts.last().unwrap().0].1.end);
                     ValueList(rest)
                 };
 
