@@ -1,5 +1,11 @@
 
 
+
+
+// CURRENT BUGS:
+// - issues with if_Eq and recu'rsive defs
+// - issue with using macros in defs
+
 use std::collections::{HashMap, BTreeMap};
 use std::fs::File;
 use std::io::{Read, Error, Write};
@@ -202,6 +208,7 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                             parts.push(Ident(part.to_owned()));
                         }
                     }
+                    println!("Definining {:?}", parts);
                     // make_mut clones as nec.
                     let mut new_scope = (*scope).clone();
                     // circular refs here?
@@ -209,6 +216,7 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                         // TODO: fix scpoe issues
                         ValueList(command_text.clone())
                     ));
+                    println!("TOEX {:?} {:?}", new_scope, ValueList(to_expand.to_vec()).to_str());
                     expand_fully(ValueClosure(Rc::new(new_scope), to_expand.clone()))
                 },
                 _ => {
@@ -228,7 +236,7 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
     }
 }
 
-fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueClosure)
+fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosure)
  -> (Option<ValueList>, ValueList) {
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
@@ -338,6 +346,8 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
         let mut result = None;
         if state != End {
             *end = idx;
+        } else {
+            *end += 1;
         }
         if !matches {
             result = Some((*prev_state, (*start..*end)));
@@ -379,20 +389,19 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
     let hpos = parsed.iter().position(|&(s, _)| { s == Halt }).map(|pos| { parsed[pos].1.start });
     if let Some(halter) = hpos {
         std::mem::drop(parsed); // a test
-        let after = values.split_off(halter);
-        println!("Priors {:?}", values);
+        let mut v = values.clone();
+        let after = v.split_off(halter);
         let closure = ValueClosure(scope.clone(), after);
         // expand one command
         match expand_command(closure) {
             (None, slice) => {
                 panic!("Could not get past halt!");
             },
-            (Some(ValueList(expanded)), ValueList(rest)) => { 
-                println!("PARTS {:?} __ EXP __ {:?} __ REST __ {:?}", &values[..(halter)], expanded, rest);
+            (Some(ValueList(expanded)), rest) => { 
+                println!("REST {:?} THENTHEN {:?}", expanded, rest.to_str());
+                v.extend(expanded);
 
-                values.extend(expanded);
-
-                return (Some(ValueList(values)), ValueList(rest) ) // TODO: why not return 'slice' here? may be a bug or sometihng here
+                return (Some(ValueList(v)), rest ) // TODO: why not return 'slice' here? may be a bug or sometihng here
             }
         }
     } else {
@@ -413,13 +422,18 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
                     .iter()
                     .skip(pos)
                     .map(|&(ref s, ref r)| {
+                        println!("Part {:?} {:?}", s, r);
                         let p  = part_for_scan(*s, &ValueList(values[r.clone()].to_vec()));
                         p
                     }).collect::<Vec<CommandPart>>();
                 // note - quadratic :(
+                let oldparts = parts.clone();
                 while { !scope.commands.contains_key(&parts)
                     && parts.pop() != None  } {
                     }
+                if parts.len() == 0 {
+                    panic!("Could not find command... {:?}", oldparts);
+                }
                
                 // nb: unwrap responses from ;-commands
     // nb: demo, parsed perf
@@ -437,6 +451,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
                             _ => None
                         }
                     }).collect::<Vec<Value>>();
+                println!("PARTS {:?}", parts);
                 let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.to_vec()).unwrap(), args, scope.clone());
                               
                 // TODO: actual expansion here; subtract 1 to avoid sigil
@@ -449,13 +464,16 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
 
                 let end = if (pos + parts.len()) == parsed.len() {
                     // todo handle whitespace properly
-
+                    println!("Endless wings!"); 
                     ValueList(vec![])
                 } else {
-                    let range = parsed[pos + parts.len()].1.clone();
-                    let rest = values.split_off(range.end);
+                    println!("RANGE {:?} {:?} {:?}", parsed, pos, parts.len());
+                    let range = parsed[pos + parts.len() - 1].1.clone();
+                    let rest = values.clone().split_off(range.end + 1);
                     ValueList(rest)
                 };
+
+                println!("DONE {:?} TILL {:?}", result, end.to_str());
 
                 return (Some(ValueList(result)), end);
 
