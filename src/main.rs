@@ -1,19 +1,24 @@
 
-
-
+#![allow(dead_code)]
+// ^ rls doesn't handle tests correctly
 
 // CURRENT BUGS:
 // - issues with if_Eq and recu'rsive defs
 // - issue with using macros in defs - basic problem relates to whitespace
 
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Error, Write};
 use std::result::Result;
+
+
 use std::borrow::BorrowMut;
 use std::ops::{Deref, Range};
 use std::rc::Rc;
 use std::iter::Iterator;
+
+
+
 use std::borrow::Cow;
 use std::borrow::Borrow;
 
@@ -91,6 +96,7 @@ struct Scope {
 fn dup_scope(scope : Rc<Scope>) -> Scope {
     let fixed_commands = scope.commands.iter()
         .map(|(key, val)| {
+            println!("Duping {:?}", key);
             (key.clone(), match val {
                 // avoid circular refs? cloning a lot, also...
                 &Command::UserHere(ref arg_names, ValueList(ref list)) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), list.clone())),
@@ -145,8 +151,8 @@ fn part_for_scan(scan: ScanState, data: &ValueList) -> Option<CommandPart> {
         (CommandName, _) => {
             Some(Ident(data.to_str()))
         },
-        (Parens(0), _)
-        | (RawParens(0), _) => {
+        (Parens(_), _)
+        | (RawParens(_), _) => {
            Some(Param)
         },
         (Semicolon, _) => {
@@ -161,17 +167,17 @@ fn part_for_scan(scan: ScanState, data: &ValueList) -> Option<CommandPart> {
 
 
 
-fn expand_fully(c : ValueClosure)
+fn expand_fully(ValueClosure(scope, values) : ValueClosure)
     -> ValueList {
-    let mut closure = c.clone();
+    let mut closure = values.clone();
     let mut out = vec![];
     loop {
         closure = {
-            let (next, ValueList(slice)) = expand_command(closure.clone());
+            println!("Exp {:?}", scope.commands.keys());
+            let (next, ValueList(slice)) = expand_command(ValueClosure(scope.clone(), closure));
             if let Some(ValueList(c)) = next {
                 out.extend(c);
-                let ValueClosure(scope, _) = closure;
-                ValueClosure(scope.clone(),slice)
+                slice
             } else {
                 out.extend(slice);
                 return ValueList(out);
@@ -184,28 +190,39 @@ fn expand_fully(c : ValueClosure)
 fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
     match command {
         &Command::Rescope => {
+            panic!("RESCOPE");
             match(&args[0], &args[1]) {
                 (&List(ValueList(ref v)), &Closure(ValueClosure(_, ref contents))) => {
                     match (v.first()) {
                         Some(&Closure(ValueClosure(ref inner_scope, _))) => ValueList(vec![
                             Closure(ValueClosure(inner_scope.clone(), contents.clone()))
-                        ])
+                        ]),
+                        _ => {panic!(); }
                     }
-                }
+                },
+                _ => {panic!(); }
             }
         },
         &Command::Expand => {
+            panic!();
             match(&args[0]) {
-                (List(ValueList(v))) => {
+                &List(ValueList(ref v)) => {
+
                     match (v.first()) {
-                        Some(&Closure(c)) => ValueList(vec![
-                            List(expand_fully(c)) // should i wrap this in another valuelist?
-                        ])
+                        Some(&Closure(ref c)) => {
+                            
+                           let expanded = List(expand_fully(c.clone())); // should i wrap this in another valuelist?
+                            panic!("Test {:?}", expanded);
+                            ValueList(vec![ expanded  ])
+                        },
+                        _ => {panic!(); }
                     }
-                }
+                },
+                _ => {panic!(); }
             }
         }
         &Command::Immediate(ref x) => {
+            println!("IMMED {:?}", x);
             ValueList(vec![ x.clone() ])
         },
         &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
@@ -219,7 +236,6 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                 // should it always take no arguments?
                 // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                 // or a Tagged). coerce sometimes?
-                println!("Adding {:?} {:?}", name, arg);
                 new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
             }
             expand_fully(ValueClosure(Rc::new(new_scope), contents.clone()))
@@ -237,7 +253,6 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                     let mut parts = vec![];
                     let mut params = vec![];
                     let na_str = name_args.to_str();
-                    println!("NASTR X{:?}X", na_str);
                     for part in na_str.split(' ') {
                         if part.starts_with(':') {
                             parts.push(Param);
@@ -254,7 +269,6 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                         // TODO: fix scpoe issues
                         ValueList(command_text.clone())
                     ));
-                    println!("TOEX {:?} {:?}", new_scope, ValueList(to_expand.to_vec()).to_str());
                     expand_fully(ValueClosure(Rc::new(new_scope), to_expand.clone()))
                 },
                 _ => {
@@ -328,10 +342,10 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
             (CommandName, _, Some('{'))
             | (Whitespace, _, Some('{'))
             | (CloseParen, _, Some('{')) => { RawParens(0) },
-            (RawParens(x), _, Some('{')) => { RawParens(x + 1) },
+            (RawParens(x), _, Some('{')) => { println!("OPEN {:?}", x); RawParens(x + 1) },
             (RawParens(0), _, Some('}')) => { CloseParen },
-            (RawParens(x), _, Some('}')) => { RawParens(x - 1) },
-            (RawParens(x), _, _) => { RawParens(x) },
+            (RawParens(x), _, Some('}')) => { println!("CLOSE {:?}", x); RawParens(x - 1) },
+            (RawParens(x), _, Some(c)) => { RawParens(x) },
 
 
             (Parens(x), _, w) => {
@@ -341,6 +355,9 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                     Parens(x)
                 }
             },
+
+            (Parens(x), _, _) => { Parens(x) },
+            (RawParens(x), _, _) => { RawParens(x) },
 
 
             (Halt, _, _) => { Halt },
@@ -377,8 +394,10 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         if *prev_state == End {
             return None;
         }
+        // get a proper debugger?
         let matches = match(*prev_state, state) {
             (Parens(x), Parens(y)) => { true }
+            (RawParens(x), RawParens(y)) => { true }
             (x, y) => { x == y }
         };
         let mut result = None;
@@ -397,11 +416,16 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
     .flat_map(|x| { x })
     .flat_map(|(state, r)| {
         let mut range = r.clone();
-        match state {
+        let s = match state {
+            Parens(_) => Parens(0),
+            RawParens(_) => RawParens(0),
+            x => x
+        };
+        match s {
             Parens(_)
             | RawParens(_) => {
-                vec![(OpenParen, ((range.start)..(range.start + 1))),
-                        (state, ((range.start+1)..(range.end))) ]
+                vec![(OpenParen, ((range.start)..(range.start+1))),
+                        (s, ((range.start+1)..(range.end))) ]
             },
             _ => {
                 vec![(state, range)]
@@ -410,6 +434,8 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
     })
     .collect::<Vec<(ScanState, Range<usize>)>>();
  
+ //   println!("PARSED {:?}", parsed.clone().iter().map(|&(ref s, ref x)| (s.clone(), values[x.clone().start .. x.clone().end].to_vec())).collect::<Vec<(ScanState, Vec<Value>)>>() ) ;
+
     /*.filter(|&(state,  _)| {
         // TODO keep whitespace at end of macro
         state != Whitespace &&
@@ -427,15 +453,16 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         std::mem::drop(parsed); // a test
         let mut v = values.clone();
         let after = v.split_off(halter);
+        println!("HERE {:?} {:?}", v, after);
         let closure = ValueClosure(scope.clone(), after);
         // expand one command
         match expand_command(closure) {
             (None, slice) => {
                 panic!("Could not get past halt!");
             },
-            (Some(ValueList(expanded)), rest) => { 
+            (Some(expanded), rest) => { 
                 println!("REST {:?} THENTHEN {:?}", expanded, rest.to_str());
-                v.extend(expanded);
+                v.push(List(expanded)); // testing instead of extend
 
                 return (Some(ValueList(v)), rest ) // TODO: why not return 'slice' here? may be a bug or sometihng here
             }
@@ -463,7 +490,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                     && parts.pop() != None  } {
                     }
                 if parts.len() == 0 {
-                    panic!("Could not find command... {:?}", oldparts);
+                    panic!("Could not find command... {:?} IN {:?}", oldparts, scope);
                 }
                 // Hacky hacky hack
                 while parts.last().unwrap().1 == None
@@ -475,7 +502,8 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
     // nb: demo, parsed perf
                 // type coerce args and retvals
                 let pos_end = parts.last().unwrap().0;
-                let args = parsed[(parts.first().unwrap().0)..(parts.last().unwrap().0 + 1)]
+                let args = parsed[(parts.first().unwrap().0)..(parts.last().unwrap().0+ 1)]
+                    .to_vec()
                     .iter()
                     .flat_map(|&(ref state, ref range)| {
                         let vals = &values[range.clone()];
@@ -486,7 +514,6 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                             _ => None
                         }
                     }).collect::<Vec<Value>>();
-                println!("PARTS {:?}", parts);
                 let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().flat_map(|&(ref i, ref x)|{ x}).cloned().collect::<Vec<CommandPart>>()).unwrap(), args, scope.clone());
                               
                 // TODO: actual expansion here; subtract 1 to avoid sigil
@@ -498,12 +525,10 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                 .collect::<Vec<Value>>();
 
                 let end = {
-                    println!("RANGE {:?} {:?} {:?}", parsed, pos, parts.len());
                     let rest = values.clone().split_off(parsed[parts.last().unwrap().0].1.end);
                     ValueList(rest)
                 };
 
-                println!("DONE {:?} TILL {:?}", result, end.to_str());
 
                 return (Some(ValueList(result)), end);
 
@@ -555,7 +580,7 @@ impl Value {
                 s.iter().map(|x| { x.serialize() })
                     .fold("".to_owned(), |a, b| { a + &*b })
             },
-            &Closure(_) => { panic!("Cannot serialize closures."); }
+            &Closure(ref x) => { panic!("Cannot serialize closure: {:?}", x); }
         })
     }
 }
