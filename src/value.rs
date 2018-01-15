@@ -48,6 +48,26 @@ impl fmt::Debug for ValueList {
     }
 }
 
+impl fmt::Debug for ValueClosure {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let ValueClosure(ref scope, ref x) = self;
+        write!(f, "[@");
+        let mut first = true;
+        for k in scope.commands.keys() {
+            if first { first = false; } else { write!(f, "|")?; }
+            k.fmt(f)?;
+        }
+        write!(f, "]<");
+        first = true;
+        for item in x {
+            if first { first = false; } else { write!(f, "|")?; }
+            item.fmt(f)?;
+        }
+        write!(f, ">")?;
+
+    }
+}
+
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
