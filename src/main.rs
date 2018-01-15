@@ -405,7 +405,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         }
     } else {
 
-        let pos = parsed.iter().position(|&(s, _)| { s == CommandName });
+        let pos = parsed.iter().position(|&(s, _)| { s == Sigil });
         match pos {
             None => {
                 (None, ValueList(values))
