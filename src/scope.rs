@@ -21,7 +21,7 @@ pub enum CommandPart {
     Ident(String),
     Param
 }
-use CommandPart::*;
+pub use CommandPart::*;
 
 #[derive(Debug)]
 pub struct Scope {

@@ -10,26 +10,15 @@ mod value;
 mod scope;
 
 use scope::*;
-use scope::CommandPart::*;
 
+use std::ops::Range;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Error, Write};
 use std::result::Result;
-
-
-use std::borrow::BorrowMut;
-use std::ops::{Deref, Range};
 use std::rc::Rc;
 use std::iter::Iterator;
-
-use std::fmt;
-
-use std::borrow::Cow;
-use std::borrow::Borrow;
-
 use value::*;
-use value::Value::*;
 
 // TODO cloneless
 
@@ -41,7 +30,7 @@ impl ValueList {
     fn to_str(&self) -> String {
         let &ValueList(ref list) = self;
         (&list).iter().map(|x| {
-            match(x) {
+            match x {
                 &Char(ValueChar(c)) => { c }
                 _ => { panic!() }
             }
@@ -236,7 +225,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         };
         let ValueChar(sigil) = scope.sigil;
         let is_white = ch.map(|c| c.is_whitespace()).unwrap_or(false);
-        *state = match( (*state, false, ch) ) {
+        *state = match (*state, false, ch) {
             (Text, _, Some(c)) => {
                 if c == sigil {
                     Sigil
