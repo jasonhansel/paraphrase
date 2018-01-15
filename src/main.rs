@@ -185,7 +185,7 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
     match command {
         &Command::Rescope => {
             match(&args[0], &args[1]) {
-                (List(ValueList(v)), Closure(ValueClosure(_, ref contents))) => {
+                (&List(ValueList(ref v)), &Closure(ValueClosure(_, ref contents))) => {
                     match (v.first()) {
                         Some(&Closure(ValueClosure(ref inner_scope, _))) => ValueList(vec![
                             Closure(ValueClosure(inner_scope.clone(), contents.clone()))
