@@ -4,7 +4,6 @@
 
 // CURRENT BUGS:
 // - issues with if_Eq and recu'rsive defs
-// - issue with using macros in defs - basic problem relates to whitespace
 
 mod value;
 mod scope;
