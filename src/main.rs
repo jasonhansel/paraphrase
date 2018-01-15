@@ -446,7 +446,6 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueCl
                 .chain(expand_result.iter())
                 .cloned()
                 .collect::<Vec<Value>>();
-                println!("Result {:?} {:?}", parsed[pos], result);
 
                 let end = if (pos + parts.len()) == parsed.len() {
                     // todo handle whitespace properly
