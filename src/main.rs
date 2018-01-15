@@ -4,7 +4,7 @@
 
 // CURRENT BUGS:
 // - issues with if_Eq and recu'rsive defs
-// - issue with using macros in defs
+// - issue with using macros in defs - basic problem relates to whitespace
 
 use std::collections::{HashMap, BTreeMap};
 use std::fs::File;
@@ -119,27 +119,28 @@ enum ScanState {
     Start,
     End,
     Semi,
+    OpenParen,
     Semicolon
 }
 use ScanState::*;
 
 
-fn part_for_scan(scan: ScanState, data: &ValueList) -> CommandPart {
+fn part_for_scan(scan: ScanState, data: &ValueList) -> Option<CommandPart> {
     match (scan, data) {
         (CommandName, _) => {
-            Ident(data.to_str())
+            Some(Ident(data.to_str()))
         },
         (Parens(0), _)
         | (RawParens(0), _) => {
-           Param
+           Some(Param)
         },
         (Semicolon, _) => {
-            Param
+            Some(Param)
         },
         _ => {
-            println!("INV {:?}", scan);
-            Ident("INVALID".to_owned())
-            }
+            // TODO: Text should stop scanning altogether, whereas eg. whitespace can continue it
+            None
+        }
     }
 }
 
@@ -357,31 +358,29 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         Some(result)
     })
     .flat_map(|x| { x })
-    .filter(|&(state,  _)| {
+    .flat_map(|(state, r)| {
+        let mut range = r.clone();
+        match state {
+            Parens(_)
+            | RawParens(_) => {
+                vec![(OpenParen, ((range.start)..(range.start + 1))),
+                        (state, ((range.start+1)..(range.end))) ]
+            },
+            _ => {
+                vec![(state, range)]
+            }
+        }
+    })
+    .collect::<Vec<(ScanState, Range<usize>)>>();
+ 
+    /*.filter(|&(state,  _)| {
         // TODO keep whitespace at end of macro
         state != Whitespace &&
         state != Start &&
         state != Sigil &&
         state != CloseParen &&
         state != Semi
-    })
-    .map(|(state, r)| {
-
-        let mut range = r.clone();
-        match state {
-            Parens(_)
-            | RawParens(_) => {
-                if range.start == range.end {
-                    panic!("Empty parens in {:?}", &values[..]);
-                }
-                range.start += 1;
-            },
-            _ => {}
-        }
-       (state, range)
-    })
-    .collect::<Vec<(ScanState, Range<usize>)>>();
-
+    }) */
     // note -- only Halt if we're sure it's in the current invocation?
     // ^ and enable parallelism if not a ;-command
     // ^ this may be impossible in the general case :(
@@ -420,15 +419,19 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                 };
                 let mut parts = parsed
                     .iter()
+                    .enumerate()
                     .skip(pos)
-                    .map(|&(ref s, ref r)| {
+                    .by_ref()
+                    .flat_map(|(idx, &(s, r))| {
                         println!("Part {:?} {:?}", s, r);
-                        let p  = part_for_scan(*s, &ValueList(values[r.clone()].to_vec()));
-                        p
-                    }).collect::<Vec<CommandPart>>();
+                        match part_for_scan(s, &ValueList(values[r.clone()].to_vec())) {
+                            Some(x) => Some((idx, x)),
+                            _ => None
+                        }
+                    }).collect::<Vec<(usize, CommandPart)>>();
                 // note - quadratic :(
                 let oldparts = parts.clone();
-                while { !scope.commands.contains_key(&parts)
+                while { !scope.commands.contains_key(&parts.iter().map(|&(i, x)| { x }).collect())
                     && parts.pop() != None  } {
                     }
                 if parts.len() == 0 {
@@ -441,7 +444,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                 let args = parsed
                     .iter()
                     .skip(pos)
-                    .take(parts.len())
+                    .take(parts.last().unwrap().0 - pos)
                     .flat_map(|&(ref state, ref range)| {
                         let vals = &values[range.clone()];
                         match *state {
@@ -452,7 +455,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                         }
                     }).collect::<Vec<Value>>();
                 println!("PARTS {:?}", parts);
-                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.to_vec()).unwrap(), args, scope.clone());
+                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().map(|&(i, x)|{ x}).collect()).unwrap(), args, scope.clone());
                               
                 // TODO: actual expansion here; subtract 1 to avoid sigil
                 let result = values
