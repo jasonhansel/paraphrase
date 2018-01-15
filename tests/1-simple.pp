@@ -1,7 +1,11 @@
 #define(h){Hello};
 #define(w){world};
-#h #w!
+Hello world! == #h #w!
 #define(x){#h #w};
-#x --
-#define(h :x){#x world};
-#h(Hello) #h
+#define(x :y){#h #expand(#rescope{#y}{#w})}
+Hello world = #x
+#define(h :y){#y world};
+Hello world Hello == #h(Hello) #h
+#define(w){new world order};
+Hello world == #x
+Hello new world order == #x{}

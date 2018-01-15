@@ -68,7 +68,9 @@ enum Command {
     IfEq,
     User(Vec<String>, ValueClosure), // arg names
     UserHere(Vec<String>, ValueList), // TODO: clone UserHere's into User's
-    Immediate(Value)
+    Immediate(Value),
+    Expand,
+    Rescope
 }
 
 use Value::*;
@@ -80,10 +82,23 @@ enum CommandPart {
 }
 use CommandPart::*;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct Scope {
     sigil: ValueChar,
     commands: HashMap<Vec<CommandPart>, Command>
+}
+
+fn dup_scope(scope : Rc<Scope>) -> Scope {
+    let fixed_commands = scope.commands.iter()
+        .map(|(key, val)| {
+            (key.clone(), match val {
+                // avoid circular refs? cloning a lot, also...
+                &Command::UserHere(ref arg_names, ValueList(ref list)) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), list.clone())),
+                x => x.clone()
+            })
+        })
+        .collect::<HashMap<Vec<CommandPart>,Command>>();
+    Scope { sigil: scope.sigil.clone(), commands: fixed_commands }
 }
 
 impl ValueList {
@@ -171,10 +186,10 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
         &Command::Immediate(ref x) => {
             ValueList(vec![ x.clone() ])
         },
-        &Command::User(ref arg_names, ValueClosure(ref scope, ref contents)) => {
+        &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
             // todo handle args
             //clone() scope?
-            let mut new_scope = (**scope).clone();
+            let mut new_scope = dup_scope(inner_scope.clone());
             if arg_names.len() != args.len() {
                 panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
             }
@@ -211,7 +226,7 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                     }
                     println!("Definining {:?}", parts);
                     // make_mut clones as nec.
-                    let mut new_scope = (*scope).clone();
+                    let mut new_scope = dup_scope(scope);
                     // circular refs here?
                     new_scope.commands.insert(parts, Command::UserHere(params,
                         // TODO: fix scpoe issues
@@ -411,31 +426,27 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                 (None, ValueList(values))
             }
             Some(pos) => {
-                let idxpos = match pos {
-                    0 => 0,
-                    p => {
-                        parsed[p - 1].1.start
-                    }
-                };
                 let mut parts = parsed
                     .iter()
                     .enumerate()
                     .skip(pos)
                     .by_ref()
-                    .flat_map(|(idx, &(ref s, ref r))| {
+                    .map(|(idx, &(ref s, ref r))| {
                         println!("Part {:?} {:?}", s, r);
-                        match part_for_scan(*s, &ValueList(values[r.clone()].to_vec())) {
-                            Some(x) => Some((idx, x)),
-                            _ => None
-                        }
-                    }).collect::<Vec<(usize, CommandPart)>>();
+                        (idx, part_for_scan(*s, &ValueList(values[r.clone()].to_vec())))
+                    }).collect::<Vec<(usize, Option<CommandPart>)>>();
                 // note - quadratic :(
                 let oldparts = parts.clone();
-                while { !scope.commands.contains_key(&parts.iter().map(|&(ref i, ref x)| { x }).cloned().collect::<Vec<CommandPart>>())
+                while { !scope.commands.contains_key(&parts.iter().flat_map(|&(ref i, ref x)| { x }).cloned().collect::<Vec<CommandPart>>())
                     && parts.pop() != None  } {
                     }
                 if parts.len() == 0 {
                     panic!("Could not find command... {:?}", oldparts);
+                }
+                // Hacky hacky hack
+                while parts.last().unwrap().1 == None
+                    && parsed[parts.last().unwrap().0].0 != CloseParen {
+                    parts.pop();
                 }
                
                 // nb: unwrap responses from ;-commands
@@ -454,7 +465,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
                         }
                     }).collect::<Vec<Value>>();
                 println!("PARTS {:?}", parts);
-                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().map(|&(ref i, ref x)|{ x}).cloned().collect::<Vec<CommandPart>>()).unwrap(), args, scope.clone());
+                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.iter().flat_map(|&(ref i, ref x)|{ x}).cloned().collect::<Vec<CommandPart>>()).unwrap(), args, scope.clone());
                               
                 // TODO: actual expansion here; subtract 1 to avoid sigil
                 let result = values
@@ -502,6 +513,12 @@ fn expand(ValueList(values): ValueList) -> ValueList {
     );
     scope.commands.insert(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ],
         Command::IfEq
+    );
+    scope.commands.insert(vec![ Ident("expand".to_owned()), Param ],
+        Command::Expand
+    );
+    scope.commands.insert(vec![ Ident("rescope".to_owned()), Param, Param ],
+        Command::Rescope
     );
     expand_fully(ValueClosure(Rc::new(scope), values))
     // note - make sure recursive macro defs work
