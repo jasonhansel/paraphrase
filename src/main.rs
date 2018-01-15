@@ -109,7 +109,6 @@ fn expand_fully(ValueClosure(scope, values) : ValueClosure)
 fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
     match command {
         &Command::Rescope => {
-            panic!("RESCOPE");
             match(&args[0], &args[1]) {
                 (&List(ValueList(ref v)), &Closure(ValueClosure(_, ref contents))) => {
                     match (v.first()) {
@@ -123,7 +122,6 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
             }
         },
         &Command::Expand => {
-            panic!();
             match(&args[0]) {
                 &List(ValueList(ref v)) => {
 
@@ -131,7 +129,6 @@ fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
                         Some(&Closure(ref c)) => {
                             
                            let expanded = List(expand_fully(c.clone())); // should i wrap this in another valuelist?
-                            panic!("Test {:?}", expanded);
                             ValueList(vec![ expanded  ])
                         },
                         _ => {panic!(); }
@@ -376,14 +373,18 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, values): ValueClosur
         let closure = ValueClosure(scope.clone(), after);
         // expand one command
         match expand_command(closure) {
-            (None, slice) => {
-                panic!("Could not get past halt!");
+            (None, ValueList(slice)) => {
+                // We got past *a* halt, just not *this* one. Try again.
+                v.extend(slice);
+                return expand_command(ValueClosure(scope, v));
             },
-            (Some(expanded), rest) => { 
-                println!("REST {:?} THENTHEN {:?}", expanded, rest.to_str());
-                v.push(List(expanded)); // testing instead of extend
+            (Some(ValueList(expanded)), ValueList(rest)) => { 
+                v.extend(expanded); // testing instead of extend
+                // We got past the current halt, yay! There may be more, though...
+                v.extend(rest);
+                return expand_command(ValueClosure(scope, v));
 
-                return (Some(ValueList(v)), rest ) // TODO: why not return 'slice' here? may be a bug or sometihng here
+//                (None, ValueList(v) ) // TODO: why not return 'slice' here? may be a bug or sometihng here
             }
         }
     } else {
