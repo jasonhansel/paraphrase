@@ -16,7 +16,7 @@ pub struct ValueList(pub Vec<Value>);
 pub struct ValueChar(pub char);
 
 // should closures "know" about their parameters?
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ValueClosure(pub Rc<Scope>, pub Vec<Value>);
 
 
@@ -50,21 +50,21 @@ impl fmt::Debug for ValueList {
 
 impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ValueClosure(ref scope, ref x) = self;
+        let &ValueClosure(ref scope, ref x) = self;
         write!(f, "[@");
         let mut first = true;
         for k in scope.commands.keys() {
             if first { first = false; } else { write!(f, "|")?; }
             k.fmt(f)?;
         }
-        write!(f, "]<");
+        write!(f, "]CODE<");
         first = true;
         for item in x {
             if first { first = false; } else { write!(f, "|")?; }
             item.fmt(f)?;
         }
         write!(f, ">")?;
-
+        Ok(())
     }
 }
 
@@ -72,15 +72,8 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Char(ValueChar(x)) => { write!(f, "{}",x)?; },
-            &List(ValueList(ref x)) => {
-                write!(f, "List<")?;
-                let mut first = true;
-                for item in x.iter() {
-                    if first { first = false; } else { write!(f, "|")?; }
-                    item.fmt(f)?;
-                }
-                write!(f, ">")?;
-            },
+            &List(ref x) => { x.fmt(f)?; },
+            &Closure(ref x) => { x.fmt(f)?; },
             &Tagged(ref tag, ValueList(ref x)) => {
                 write!(f,"[");
                 tag.fmt(f)?; 
@@ -93,22 +86,7 @@ impl fmt::Debug for Value {
                 }
                 write!(f, ">")?;
             },
-            &Closure(ValueClosure(ref scope, ref x)) => { 
-                write!(f, "[@");
-                let mut first = true;
-                for k in scope.commands.keys() {
-                    if first { first = false; } else { write!(f, "|")?; }
-                    k.fmt(f)?;
-                }
-                write!(f, "]<");
-                first = true;
-                for item in x {
-                    if first { first = false; } else { write!(f, "|")?; }
-                    item.fmt(f)?;
-                }
-                write!(f, ">")?;
-            }
-        }
+       }
         Ok(())
     }
 }
