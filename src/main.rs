@@ -183,6 +183,28 @@ fn expand_fully(c : ValueClosure)
 // todo: allow it to return a 'replacement string'
 fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
     match command {
+        &Command::Rescope => {
+            match(&args[0], &args[1]) {
+                (List(ValueList(v)), Closure(ValueClosure(_, ref contents))) => {
+                    match (v.first()) {
+                        Some(&Closure(ValueClosure(ref inner_scope, _))) => ValueList(vec![
+                            Closure(ValueClosure(inner_scope.clone(), contents.clone()))
+                        ])
+                    }
+                }
+            }
+        },
+        &Command::Expand => {
+            match(&args[0]) {
+                (List(ValueList(v))) => {
+                    match (v.first()) {
+                        Some(&Closure(c)) => ValueList(vec![
+                            List(expand_fully(c)) // should i wrap this in another valuelist?
+                        ])
+                    }
+                }
+            }
+        }
         &Command::Immediate(ref x) => {
             ValueList(vec![ x.clone() ])
         },
