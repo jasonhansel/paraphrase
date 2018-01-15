@@ -6,6 +6,12 @@
 // - issues with if_Eq and recu'rsive defs
 // - issue with using macros in defs - basic problem relates to whitespace
 
+mod value;
+mod scope;
+
+use scope::*;
+use scope::CommandPart::*;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Error, Write};
@@ -17,95 +23,19 @@ use std::ops::{Deref, Range};
 use std::rc::Rc;
 use std::iter::Iterator;
 
-
+use std::fmt;
 
 use std::borrow::Cow;
 use std::borrow::Borrow;
 
+use value::*;
+use value::Value::*;
+
 // TODO cloneless
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Tag {
-    Num
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ValueList(Vec<Value>);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct ValueChar(char);
-
-// should closures "know" about their parameters?
-#[derive(Clone, Debug)]
-struct ValueClosure(Rc<Scope>, Vec<Value>);
-
-
-#[derive(Clone, Debug)]
-enum Value {
-    Char(ValueChar),
-    List(ValueList),
-    Tagged(Tag, ValueList),
-    Closure(ValueClosure)
-}
-
-impl PartialEq for Value {
-    fn eq(&self, other: &Value) -> bool {
-        match (self, other) {
-            (&Char(a), &Char(b)) => { a == b },
-            (&List(ref a), &List(ref b)) => { a == b },
-            (&Tagged(ref at, ref ad), &Tagged(ref bt, ref bd)) => {
-                at == bt && ad == bd
-            },
-            (&Closure(_), _)
-            | (_, &Closure(_)) => { panic!("Cannot compare closures!"); },
-            (_, _) => false
-        }
-    }
-
-}
 impl Eq for Value {}
 
 // nb also write stdlib.
-
-#[derive(Clone, Debug)]
-enum Command {
-    Define, // add otheres, eg. expand
-    IfEq,
-    User(Vec<String>, ValueClosure), // arg names
-    UserHere(Vec<String>, ValueList), // TODO: clone UserHere's into User's
-    Immediate(Value),
-    Expand,
-    Rescope
-}
-
-use Value::*;
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-enum CommandPart {
-    Ident(String),
-    Param
-}
-use CommandPart::*;
-
-#[derive(Debug)]
-struct Scope {
-    sigil: ValueChar,
-    commands: HashMap<Vec<CommandPart>, Command>
-}
-
-fn dup_scope(scope : Rc<Scope>) -> Scope {
-    let fixed_commands = scope.commands.iter()
-        .map(|(key, val)| {
-            println!("Duping {:?}", key);
-            (key.clone(), match val {
-                // avoid circular refs? cloning a lot, also...
-                &Command::UserHere(ref arg_names, ValueList(ref list)) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), list.clone())),
-                x => x.clone()
-            })
-        })
-        .collect::<HashMap<Vec<CommandPart>,Command>>();
-    Scope { sigil: scope.sigil.clone(), commands: fixed_commands }
-}
 
 impl ValueList {
     fn to_str(&self) -> String {
