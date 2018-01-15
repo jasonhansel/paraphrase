@@ -19,26 +19,26 @@ enum Tag {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ValueList<'f>(&'f [Value<'f>]);
+struct ValueList(Vec<Value>);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct ValueChar(char);
 
 // should closures "know" about their parameters?
 #[derive(Clone, Debug)]
-struct ValueClosure<'f>(Rc<Scope<'f>>, &'f [Value<'f>]);
+struct ValueClosure(Rc<Scope>, Vec<Value>);
 
 
 #[derive(Clone, Debug)]
-enum Value<'f> {
+enum Value {
     Char(ValueChar),
-    List(ValueList<'f>),
-    Tagged(Tag, ValueList<'f>),
-    Closure(ValueClosure<'f>)
+    List(ValueList),
+    Tagged(Tag, ValueList),
+    Closure(ValueClosure)
 }
 
-impl<'f> PartialEq for Value<'f> {
-    fn eq(&self, other: &Value<'f>) -> bool {
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
         match (self, other) {
             (&Char(a), &Char(b)) => { a == b },
             (&List(ref a), &List(ref b)) => { a == b },
@@ -52,16 +52,17 @@ impl<'f> PartialEq for Value<'f> {
     }
 
 }
-impl<'f> Eq for Value<'f> {}
+impl Eq for Value {}
 
 // nb also write stdlib.
 
 #[derive(Clone, Debug)]
-enum Command<'f> {
+enum Command {
     Define, // add otheres, eg. expand
     IfEq,
-    User(Vec<String>, ValueClosure<'f>), // arg names
-    UserHere(Vec<String>, ValueList<'f>) // TODO: clone UserHere's into User's
+    User(Vec<String>, ValueClosure), // arg names
+    UserHere(Vec<String>, ValueList), // TODO: clone UserHere's into User's
+    Immediate(Value)
 }
 
 use Value::*;
@@ -74,12 +75,12 @@ enum CommandPart {
 use CommandPart::*;
 
 #[derive(Clone, Debug)]
-struct Scope<'f> {
+struct Scope {
     sigil: ValueChar,
-    commands: HashMap<Vec<CommandPart>, Command<'f>>
+    commands: HashMap<Vec<CommandPart>, Command>
 }
 
-impl<'f> ValueList<'f> {
+impl ValueList {
     fn to_str(&self) -> String {
         let &ValueList(ref list) = self;
         (&list).iter().map(|x| {
@@ -91,12 +92,12 @@ impl<'f> ValueList<'f> {
     }
 }
 
-fn read_file<'f>(path: &str) -> Result<Vec<Value<'f>>, Error> {
+fn read_file(path: &str) -> Result<Vec<Value>, Error> {
     println!("Reading...");
     std::io::stdout().flush().unwrap();
     let mut x = String::new();
     File::open(path)?.read_to_string(&mut x)?;
-    Ok(x.chars().map(|x| Value::Char(ValueChar(x))).collect::<Vec<Value<'f>>>())
+    Ok(x.chars().map(|x| Value::Char(ValueChar(x))).collect::<Vec<Value>>())
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -122,39 +123,113 @@ fn part_for_scan(scan: ScanState, data: &ValueList) -> CommandPart {
         (CommandName, _) => {
             Ident(data.to_str())
         },
-        (Parens(0), _) => {
+        (Parens(0), _)
+        | (RawParens(0), _) => {
            Param
         },
         (Semicolon, _) => {
             Param
         },
-        _ => Ident("INVALID".to_owned())
+        _ => {
+            println!("INV {:?}", scan);
+            Ident("INVALID".to_owned())
+            }
     }
 }
 
 
 
-fn expand_fully<'f>(c : ValueClosure<'f>)
-    -> ValueList<'f> {
+fn expand_fully(c : ValueClosure)
+    -> ValueList {
     let mut closure = c.clone();
     let mut out = vec![];
     loop {
         closure = {
             let (next, ValueList(slice)) = expand_command(closure.clone());
             if let Some(ValueList(c)) = next {
-                out.extend_from_slice(c);
+                out.extend(c);
                 let ValueClosure(scope, _) = closure;
                 ValueClosure(scope.clone(),slice)
             } else {
-                out.extend_from_slice(slice);
-                return ValueList(slice);
+                out.extend(slice);
+                return ValueList(out);
             }
         };
     }
 }
 
-fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): ValueClosure<'v>)
- -> (Option<ValueList<'a>>, ValueList<'b>) {
+// todo: allow it to return a 'replacement string'
+fn eval(command : &Command, args: Vec<Value>, scope: Rc<Scope>) -> ValueList {
+    match command {
+        &Command::Immediate(ref x) => {
+            ValueList(vec![ x.clone() ])
+        },
+        &Command::User(ref arg_names, ValueClosure(ref scope, ref contents)) => {
+            // todo handle args
+            //clone() scope?
+            let mut new_scope = (**scope).clone();
+            if arg_names.len() != args.len() {
+                panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
+            }
+            for (name, arg) in arg_names.iter().zip( args.iter() ) {
+                // should it always take no arguments?
+                // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
+                // or a Tagged). coerce sometimes?
+                println!("Adding {:?} {:?}", name, arg);
+                new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
+            }
+            expand_fully(ValueClosure(Rc::new(new_scope), contents.clone()))
+        },
+        &Command::UserHere(ref arg_names, ValueList(ref cmd_data)) => {
+            // todo handle args
+            let closure = ValueClosure(scope.clone(), cmd_data.clone());
+            eval(&Command::User(arg_names.clone(), closure), args, scope)
+        },
+        &Command::Define => {
+            // get arguments/name from param 1
+            match (&args[0], &args[1], &args[2]) {
+                (&List(ref name_args), &Closure(ValueClosure(_, ref command_text)), &Closure(ValueClosure(_, ref to_expand))) => {
+                    // TODO: custom arguments, more tests
+                    let mut parts = vec![];
+                    let mut params = vec![];
+                    let na_str = name_args.to_str();
+                    println!("NASTR X{:?}X", na_str);
+                    for part in na_str.split(' ') {
+                        if part.starts_with(':') {
+                            parts.push(Param);
+                            params.push((&part[1..]).to_owned());
+                        } else {
+                            parts.push(Ident(part.to_owned()));
+                        }
+                    }
+                    // make_mut clones as nec.
+                    let mut new_scope = (*scope).clone();
+                    // circular refs here?
+                    new_scope.commands.insert(parts, Command::UserHere(params,
+                        // TODO: fix scpoe issues
+                        ValueList(command_text.clone())
+                    ));
+                    expand_fully(ValueClosure(Rc::new(new_scope), to_expand.clone()))
+                },
+                _ => {
+                    panic!("Invalid state")
+                }
+            }
+        },
+        &Command::IfEq => {
+            match (&args[0], &args[1], &args[2], &args[3]) {
+                (ref a, ref b, &Closure(ref if_true), &Closure(ref if_false)) => {
+                     if a == b { expand_fully(if_true.clone()) }
+                     else { expand_fully(if_false.clone()) }
+                },
+                _ => { panic!("Invalid :("); }
+            }
+        }
+    }
+}
+
+fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(scope, mut values): ValueClosure)
+ -> (Option<ValueList>, ValueList) {
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
@@ -225,7 +300,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): Val
             (Halt, _, _) => { Halt },
 
             (CommandName, _, Some(c)) => {
-                if c.is_alphabetic() {
+                if c.is_alphabetic() || c == '_' {
                     CommandName
                 } else if c.is_whitespace() {
                     Whitespace
@@ -284,46 +359,45 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): Val
 
         let mut range = r.clone();
         match state {
-            Parens(_) => {
+            Parens(_)
+            | RawParens(_) => {
+                if range.start == range.end {
+                    panic!("Empty parens in {:?}", &values[..]);
+                }
                 range.start += 1;
             },
             _ => {}
         }
-       (state, &values[(range.start)..(range.end)], range)
+       (state, range)
     })
-    .collect::<Vec<(ScanState, &[Value], Range<usize>)>>();
+    .collect::<Vec<(ScanState, Range<usize>)>>();
 
     // note -- only Halt if we're sure it's in the current invocation?
     // ^ and enable parallelism if not a ;-command
     // ^ this may be impossible in the general case :(
 
-    let hpos = parsed.iter().position(|&(s, _, _)| { s == Halt }).map(|pos| { parsed[pos].2.start });
+    let hpos = parsed.iter().position(|&(s, _)| { s == Halt }).map(|pos| { parsed[pos].1.start });
     if let Some(halter) = hpos {
-        let closure = ValueClosure(scope.clone(), &(&values[halter..]));
+        std::mem::drop(parsed); // a test
+        let after = values.split_off(halter);
+        println!("Priors {:?}", values);
+        let closure = ValueClosure(scope.clone(), after);
+        // expand one command
         match expand_command(closure) {
             (None, slice) => {
                 panic!("Could not get past halt!");
             },
             (Some(ValueList(expanded)), ValueList(rest)) => { 
                 println!("PARTS {:?} __ EXP __ {:?} __ REST __ {:?}", &values[..(halter)], expanded, rest);
-                let to_reexpand = values[..(halter)] // Hack to get rid of the '#' - fix later
-                    .into_iter()
-                    .chain(expanded.into_iter())
-                    .chain(rest.into_iter())
-                    .map(|x| { x.clone() })
-                    .collect::<Vec<Value>>();
 
-                let rest = ValueClosure(
-                    scope.clone(),
-                    &to_reexpand[..]
-                );
-                let exp_rest = expand_fully(rest);
-                return (Some(exp_rest.clone()), ValueList(&[])) // TODO: why not return 'slice' here? may be a bug or sometihng here
+                values.extend(expanded);
+
+                return (Some(ValueList(values)), ValueList(rest) ) // TODO: why not return 'slice' here? may be a bug or sometihng here
             }
         }
     } else {
 
-        let pos = parsed.iter().position(|&(s, _, _)| { s == CommandName });
+        let pos = parsed.iter().position(|&(s, _)| { s == CommandName });
         match pos {
             None => {
                 (None, ValueList(values))
@@ -332,85 +406,59 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): Val
                 let idxpos = match pos {
                     0 => 0,
                     p => {
-                        parsed[p - 1].2.start
+                        parsed[p - 1].1.start
                     }
                 };
-                let mut parts = &parsed[pos..].iter()
-                    .map(|&(s, d, _)| { part_for_scan(s, &ValueList(&d[..])) }).collect::<Vec<CommandPart>>()[..];
+                let mut parts = parsed
+                    .iter()
+                    .skip(pos)
+                    .map(|&(ref s, ref r)| {
+                        let p  = part_for_scan(*s, &ValueList(values[r.clone()].to_vec()));
+                        p
+                    }).collect::<Vec<CommandPart>>();
                 // note - quadratic :(
-                while !scope.commands.contains_key(
-                    &parts.to_vec()
-                ) {
-                    if let Some((_, r)) = parts.split_last() {
-                        parts = r;
-                    } else {
-                        break;
+                while { !scope.commands.contains_key(&parts)
+                    && parts.pop() != None  } {
                     }
-               }
-                let mut call = &parsed[pos..(pos + parts.len())];
-                if parts.len() == 0 {
-                    panic!("Failure {:?} {:?}", parsed, pos);
-                }
+               
                 // nb: unwrap responses from ;-commands
     // nb: demo, parsed perf
                 // type coerce args and retvals
-                let args = call.iter().flat_map(|&(state, vals, _)| {
-                    match state {
-                        Parens(_) => Some(List(ValueList(&(vals)))),
-                        RawParens(_) => Some(Closure(ValueClosure(scope.clone(),&(vals)))),
-                        _ => None
-                    }
-                }).collect::<Vec<Value>>();
-                let ValueList(ref mut expand_result) = match scope.commands.get(&parts.to_vec()).unwrap() {
-                    &Command::User(ref args, ref closure) => {
-                        // todo handle args
-                        //clone() scope?
-                        expand_fully(closure.clone())
-                    },
-                    &Command::UserHere(ref args, ValueList(cmd_data)) => {
-                        // todo handle args
-                        let closure = ValueClosure(scope.clone(), cmd_data);
-                        expand_fully(closure.clone())
-                    },
-                    &Command::Define => {
-                        // get arguments/name from param 1
-                        match (&args[0], &args[1], &args[2]) {
-                            (&List(ref name_args), &Closure(ValueClosure(_, command_text)), &Closure(ValueClosure(_, to_expand))) => {
-                                // TODO: custom arguments, more tests
-                                let id = vec![Ident(name_args.to_str())];
-                                // make_mut clones as nec.
-                                let mut new_scope = (**scope).clone();
-                                // circular refs here?
-                                new_scope.commands.insert(id, Command::UserHere(vec![],
-                                    // TODO: fix scpoe issues
-                                    ValueList(command_text)
-                                ));
-                                expand_fully(ValueClosure(Rc::new(new_scope), to_expand))
-                            },
-                            _ => {
-                                panic!("Invalid state")
-                            }
+                let args = parsed
+                    .iter()
+                    .skip(pos)
+                    .take(parts.len())
+                    .flat_map(|&(ref state, ref range)| {
+                        let vals = &values[range.clone()];
+                        match *state {
+                            Parens(_) => Some(List(ValueList(vals.to_vec()))),
+                            RawParens(_) => Some(Closure(ValueClosure(scope.clone(),vals.to_vec()))),
+                            Semicolon => Some(Closure(ValueClosure(scope.clone(),vals.to_vec()))),
+                            _ => None
                         }
-                    },
-                    &Command::IfEq => {
-                        match (&args[0], &args[1], &args[2], &args[3]) {
-                            (ref a, ref b, &Closure(ref if_true), &Closure(ref if_false)) => {
-                                 if a == b { expand_fully(if_true.clone()) }
-                                 else { expand_fully(if_false.clone()) }
-                            },
-                            _ => { panic!("Invalid :("); }
-                        }
-                    }
-                };
-
-               
+                    }).collect::<Vec<Value>>();
+                let ValueList(ref mut expand_result) = eval(scope.commands.get(&parts.to_vec()).unwrap(), args, scope.clone());
+                              
                 // TODO: actual expansion here; subtract 1 to avoid sigil
-                let result = values[..(parsed[pos].2.start-1)].iter()
+                let result = values
+                .iter()
+                .take(parsed[pos].1.start - 1)
                 .chain(expand_result.iter())
                 .cloned()
                 .collect::<Vec<Value>>();
+                println!("Result {:?} {:?}", parsed[pos], result);
 
-                return (Some(ValueList(&result[..])), ValueList(&values[(call.last().unwrap().2.end)..]));
+                let end = if (pos + parts.len()) == parsed.len() {
+                    // todo handle whitespace properly
+
+                    ValueList(vec![])
+                } else {
+                    let range = parsed[pos + parts.len()].1.clone();
+                    let rest = values.split_off(range.end);
+                    ValueList(rest)
+                };
+
+                return (Some(ValueList(result)), end);
 
             }
         }
@@ -426,7 +474,7 @@ fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): Val
  */
 }
 
-fn expand<'f>(ValueList(values): ValueList<'f>) -> ValueList<'f> {
+fn expand(ValueList(values): ValueList) -> ValueList {
     println!("Expand...");
     std::io::stdout().flush().unwrap();
     let mut scope = Scope {
@@ -445,8 +493,8 @@ fn expand<'f>(ValueList(values): ValueList<'f>) -> ValueList<'f> {
     // note - make sure recursive macro defs work
 }
 
-impl<'f> Value<'f> {
-    fn serialize(&'f self) -> String {
+impl Value {
+    fn serialize(&self) -> String {
         (match self {
             &Char(ValueChar(x)) => x.to_string(),
             &Tagged(_, ValueList(ref s))
@@ -463,9 +511,9 @@ impl<'f> Value<'f> {
 #[test]
 fn it_works() {
     let chars = read_file("tests/1-simple.pp").unwrap();
-    let results = expand(ValueList(&chars[..]));
+    let results = expand(ValueList(chars));
     let out = Value::List(results).serialize();
-    println!("X\n{}X", out);
+    println!("||\n{}||", out);
     // ISSUE: extra whitespace at end of output
  //   assert_eq!(out, "Hello world!\n");
 }
