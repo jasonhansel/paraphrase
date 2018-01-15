@@ -134,14 +134,14 @@ fn part_for_scan(scan: ScanState, data: &ValueList) -> CommandPart {
 
 
 
-fn expand_fully<'f>(closure : &ValueClosure<'f>)
+fn expand_fully<'f>(c : ValueClosure<'f>)
     -> ValueList<'f> {
+    let mut closure = c.clone();
     let mut out = vec![];
     loop {
         closure = {
             let (next, ValueList(slice)) = expand_command(closure.clone());
-            if let Some(e) = next {
-                let c = e.borrow();
+            if let Some(ValueList(c)) = next {
                 out.extend_from_slice(c);
                 let ValueClosure(scope, _) = closure;
                 ValueClosure(scope.clone(),slice)
@@ -153,8 +153,8 @@ fn expand_fully<'f>(closure : &ValueClosure<'f>)
     }
 }
 
-fn expand_command<'a, 'b, 'v : 'b>(ValueClosure(ref scope, ref values): ValueClosure<'v>)
- -> (Option<&'a Borrow<[Value]>>, ValueList<'b>) {
+fn expand_command<'a, 'b, 'v : 'a + 'b>(ValueClosure(ref scope, ref values): ValueClosure<'v>)
+ -> (Option<ValueList<'a>>, ValueList<'b>) {
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
     // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
     // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
@@ -304,8 +304,7 @@ fn expand_command<'a, 'b, 'v : 'b>(ValueClosure(ref scope, ref values): ValueClo
             (None, slice) => {
                 panic!("Could not get past halt!");
             },
-            (Some(e), ValueList(rest)) => { 
-                let expanded = e.borrow();
+            (Some(ValueList(expanded)), ValueList(rest)) => { 
                 println!("PARTS {:?} __ EXP __ {:?} __ REST __ {:?}", &values[..(halter)], expanded, rest);
                 let to_reexpand = values[..(halter)] // Hack to get rid of the '#' - fix later
                     .into_iter()
@@ -318,8 +317,8 @@ fn expand_command<'a, 'b, 'v : 'b>(ValueClosure(ref scope, ref values): ValueClo
                     scope.clone(),
                     &to_reexpand[..]
                 );
-                let ValueList(ref exp_rest) = expand_fully(rest);
-                return (Some(exp_rest), ValueList(&[])) // TODO: why not return 'slice' here? may be a bug or sometihng here
+                let exp_rest = expand_fully(rest);
+                return (Some(exp_rest.clone()), ValueList(&[])) // TODO: why not return 'slice' here? may be a bug or sometihng here
             }
         }
     } else {
@@ -411,7 +410,7 @@ fn expand_command<'a, 'b, 'v : 'b>(ValueClosure(ref scope, ref values): ValueClo
                 .cloned()
                 .collect::<Vec<Value>>();
 
-                return (Some(&result), ValueList(&values[(call.last().unwrap().2.end)..]));
+                return (Some(ValueList(&result[..])), ValueList(&values[(call.last().unwrap().2.end)..]));
 
             }
         }
