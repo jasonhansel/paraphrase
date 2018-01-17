@@ -383,7 +383,7 @@ fn arg_for_chunk<'f>(chunk: &Chunk<'f>, scope: Rc<Scope>) -> Vec<Value> {
                 match *state {
                     Parens(_) => Some(match &vals[0] {
                         &Val(ref x) => x.clone(),
-                        _ => {panic!() }
+                        &Char(_) => { Str(vals.iter().map(|x| { x.serialize() }).collect::<String>()  ) }
                     }),
                     RawParens(_)
                     | Semicolon => Some(Closure(ValueClosure(scope.clone(),vals.to_vec()))),
@@ -397,35 +397,51 @@ fn arg_for_chunk<'f>(chunk: &Chunk<'f>, scope: Rc<Scope>) -> Vec<Value> {
 
 fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<Atom>, scope: Rc<Scope>) -> Vec<Chunk<'f>> {
     parsed.split(|&(s, _)| { s == StartSigil })
+          .map(|part| { part.iter().map(|&(ref s, ref x)| { (*s, &values[x.clone()]) }).collect::<Vec<(ScanState, &[Atom])>>() })
             .flat_map(|parts| {
                 let mut chunks = vec![];
                 let mut pos = 0;
+                if parts[pos].0 == Start {
+                    while pos < parts.len() && parts[pos].0 != StartSigil && parts[pos].0 != Sigil {
+                        chunks.push(TextChunk(&values[pos]));
+                        pos += 1;
+                    }
+                }
                 while pos < parts.len() {
                     let mut current_slice = &parts[pos..];
 
                      // note - quadratic :(
                     let oldparts = parts.clone();
-                    while {
-                        !scope.commands.contains_key(&
-                            parts.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, &values[x.clone()]) }).collect::<Vec<CommandPart>>()
-                        )
-                        && !current_slice.is_empty() } {
-                            current_slice = current_slice.split_last().unwrap().1
+                    if(!scope.commands.contains_key(&
+                            current_slice.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>()
+                    )) {
+                        while !current_slice.is_empty() { 
+                            current_slice = current_slice.split_last().unwrap().1;
+                            if(scope.commands.contains_key(&
+                                current_slice.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>()
+                            )) {
+                                break;
+                            }                           
                         }
-                    if current_slice.is_empty() {
-                        panic!("Could not find command... {:?} IN {:?}", oldparts, scope);
+                        
+                        if current_slice.is_empty() {
+                            panic!("Could not find command... {:?} IE {:?} IN {:?}", oldparts, oldparts.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>(), scope);
+                        } else {
+                            current_slice = current_slice.split_last().unwrap().1;
+                        }
                     }
-                    
                     // Hacky hacky hack
                     while {
                         match current_slice[current_slice.len()-1].0 {
                             CloseParen
                             | CommandName
+                            | Semicolon
                             => {
                                 false
                             },
                             Halt => {panic!() },
-                            _ => {
+                            x => {
+                                println!("STRIPPING {:?}", x);
                                 current_slice = current_slice.split_last().unwrap().1;
                                 true
                             }
@@ -433,7 +449,7 @@ fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<A
                     } {}
                     chunks.push(CommandChunk(current_slice
                         .iter()
-                        .map(|&(ref s, ref x)| { (*s, &values[(x.clone())]) })
+                        .map(|&(ref s, x)| { (*s, x) })
                         .collect()));
                     
                     pos += current_slice.len();
@@ -450,13 +466,15 @@ fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<A
 fn expand_chunk<'f>(chunk: &Chunk<'f>, scope: Rc<Scope>) -> Atom {
     match chunk {
         &TextChunk(v) => { v.clone() },
-        &CommandChunk(ref parts) => { 
+        &CommandChunk(ref parts) => {
+            let p = parts.iter().flat_map(|&(ref i, ref x)|{ part_for_scan(*i, x) }).collect::<Vec<CommandPart>>();
+                println!("P {:?}", p);
             Val(
                 eval(
                     scope.clone(),
                     scope.commands.get(
                         &(
-                            parts.iter().flat_map(|&(ref i, ref x)|{ part_for_scan(*i, x) }).collect::<Vec<CommandPart>>()
+                            p
                         )[..]
                     ).unwrap(),
                     &arg_for_chunk(&chunk, scope.clone())[..]
