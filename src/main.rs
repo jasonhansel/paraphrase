@@ -341,6 +341,76 @@ fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
     parse_text(values, 0, scope.clone()).0
 }
 
+fn parens_to_arg(tokens: Vec<Token>) -> Value {
+}
+
+fn raw_to_arg(tokens: Vec<Token>, scope: Rc<Scope>) -> Value {
+    return ValueClosure(scope, tokens.map(|x| {
+        match x {
+            Token::Char(c) => Char(c),
+            _ => { panic!() }
+        }
+    }))
+}
+
+fn new_expand(closure: &ValueClosure) -> Vec<Atom> {
+    let parsed = new_parse(closure);
+    let &ValueClosure(ref scope, _) = closure;
+
+    loop {
+        let last = None;
+        for idx in (0..(parsed.len())) {
+            if let Token::Ident(_) = parsed[idx] {
+                last = Some(idx);
+            }
+        }
+        match last {
+            Some(start_idx) => {
+                let paren_count = 0;
+                let in_parens : Option<Vec<Token>> = None;
+                
+                let parts : Vec<CommandPart> = vec![ Ident(match parsed[start_idx] {
+                    Token::Ident(v) => v,
+                    _ => { panic!() }
+                }) ];
+                let results : Vec<Value> = vec![];
+                for idx in (start_idx..parsed.len()) {
+                    // NB cannot contain any other commands
+                    match (parsed[idx], in_parens) {
+                        (Token::StartParen, None) => { in_parens = Some(vec![]); },
+                        (Token::Text(a), Some(c)) => { c.push(a); }
+                        (Token::EndParen, Some(c)) => { results.push(parens_to_arg(c)); in_parens = None; parts.push(Param); }
+                        (Token::RawParam(c), None) => { results.push(raw_to_arg(c, scope)); parts.push(Param); },
+                        (Token::Semicolon(c), None) => { results.push(raw_to_arg(c, scope)); parts.push(Param); }
+                    }
+                }
+                panic!("Would expand {:?} {:?}", results, parts);
+            },
+            None => {
+                parsed.iter().map(|x| {
+                    match x {
+                        Text(c) => Char(c),
+                        _ => { panic!("Failure..."); }
+                    }
+                })
+            }
+        }
+    }
+
+    Val(
+                eval(
+                    scope.clone(),
+                    scope.commands.get(
+                        &(
+                            p
+                        )[..]
+                    ).unwrap(),
+                    &arg_for_chunk(&chunk, scope.clone())[..]
+                )
+            )
+
+}
+
 fn parse(&ValueClosure(ref scope, ref values): &ValueClosure) -> Vec<(ScanState, Range<usize>)> {
 
     // Allow nested macroexpansion (get order right -- 'inner first' for most params,
@@ -702,7 +772,7 @@ impl Atom {
 
 #[test]
 fn it_works() {
-    println!("{:?}", new_parse(&ValueClosure(Rc::new(default_scope()),
+    println!("{:?}", new_expand(&ValueClosure(Rc::new(default_scope()),
             "(#expand(#expand(#z))#expand{#expand{#z}})".chars().map(|x| { Char(x) })
             .collect::<Vec<Atom>>()
     )));
