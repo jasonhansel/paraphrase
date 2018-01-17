@@ -406,7 +406,7 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                         (&Token::Semicolon(c), false) => { results.push(raw_to_arg(c, scope.clone() )); parts.push(Param); },
                         (_, _) => { panic!("Could not handle {:?} {:?} in {:?}", parsed[idx], in_parens.clone(), parsed); }
                     }
-                    println!("TRYING {:?}", parts);
+                    println!("TRYING {:?} {:?}", parts, scope);
                     if let Some(command) = scope.commands.get(&parts) {
                         out = Some((idx, Val(eval(
                             scope.clone(),
