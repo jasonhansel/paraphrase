@@ -78,7 +78,9 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
         &Command::Expand => {
             match &args[0] {
                 &Closure(ref c) => {
-                    retval_to_val(new_expand(c))
+                    let rv = retval_to_val(new_expand(c));
+                    println!("GIVING {:?}", rv);
+                    rv
                 },
                 _ => {panic!("ARG {:?}", args[0]); }
             }
@@ -431,11 +433,13 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                     }
                     println!("TRYING {:?} {:?}", parts, scope);
                     if let Some(command) = scope.commands.get(&parts) {
-                        out = Some((idx, Val(eval(
+                        let ev = eval(
                             scope.clone(),
                             command,
                             &results[..]
-                        ))));
+                        ));
+                        println!("EV {:?}", ev);
+                        out = Some((idx, Val(ev));
                         break;
                     }
                 }
