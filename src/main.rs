@@ -31,7 +31,7 @@
 // a ;-command).
 
 
-// TODO fix bugs in test
+// TODO fix bugs in test - is newline behavior desirable?
 
 // NOTE: expanding from the right  === expanding greedily
 
@@ -63,54 +63,8 @@ fn read_file(path: &str) -> Result<Vec<Atom>, Error> {
     Ok(x.chars().map(|x| Char(x)).collect::<Vec<Atom>>())
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum ScanState {
-    Text,
-    Whitespace,
-    Parens(u8), // <- int gives parenlevel
-    RawParens(u8),
-    StartSigil,
-    Sigil,
-    CommandName,
-    CloseParen,
-    Halt, // <- sigil inside of parameter
-    Start,
-    End,
-    Semi,
-    OpenParen,
-    Semicolon
-}
-use ScanState::*;
 
-
-fn part_for_scan(scan: ScanState, data: &[Atom]) -> Option<CommandPart> {
-    match (scan, data) {
-        (CommandName, _) => {
-            Some(Ident(data.iter().fold("".to_owned(), |mut s, x| {
-                s.push(match x {
-                    &Char(x) => { x },
-                    _ => {panic!() }
-                });
-                s
-            })))
-        },
-        (Parens(_), _)
-        | (RawParens(_), _) => {
-           Some(Param)
-        },
-        (Semicolon, _) => {
-            Some(Param)
-        },
-        _ => {
-            // TODO: Text should stop scanning altogether, whereas eg. whitespace can continue it
-            None
-        }
-    }
-}
-
-
-
-fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
+fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Value {
    match command {
         &Command::Rescope => {
             match(&args[0], &args[1]) {
@@ -129,7 +83,6 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
             }
         }
         &Command::Immediate(ref x) => {
-            println!("IMMED {:?}", x);
             x.clone()
         },
         &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
@@ -233,7 +186,6 @@ enum Token<'f> {
 fn parse_command<'f>(mut values: &'f [Atom], scope: Rc<Scope>) -> (Vec<Token<'f>>, &'f [Atom]) {
     let mut tokens = vec![];
     let mut parts : Vec<CommandPart> = vec![];
-    let mut paren_level : u8 = 0;
     let mut ident = "".to_owned();
     // TODO: multi-part commands, variadic macros (may never impl - too error prone)
     while let Some((next, v)) = values.split_first() {
@@ -312,7 +264,6 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
                 values = v;
                 break;
             } else {
-                panic!("Weird end paren");
                 tokens.push(Token::Text(next));
                 values = v;
             }
@@ -324,9 +275,7 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
     (tokens, values)
 }
 
-fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
-        -> Vec<Token> {
-    let call_stack : Vec<Option<Vec<CommandPart>>> = vec! [];
+fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure) -> Vec<Token> {
     parse_text(values, 0, scope.clone()).0
 }
 
@@ -409,7 +358,7 @@ fn new_expand(closure: &ValueClosure) -> Vec<Atom> {
 fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
     loop {
         let mut last = None;
-        for idx in (0..(parsed.len())) {
+        for idx in 0..(parsed.len()) {
             if let Token::Ident(_) = parsed[idx] {
                 last = Some(idx);
                 println!("STARTIDX {:?}", idx);
@@ -417,13 +366,11 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
         }
         match last {
             Some(start_idx) => {
-                let paren_count = 0;
                 let mut in_parens : Option<Vec<Token>> = None;
-                
                 let mut parts : Vec<CommandPart> = vec![];
                 let mut results : Vec<Value> = vec![];
                 let mut out = None;
-                for idx in (start_idx..parsed.len()) {
+                for idx in start_idx..parsed.len() {
                     println!("Adding {:?}", parsed[idx]);
                     // NB cannot contain any other commands - hence no nested parens
                     match (&parsed[idx], in_parens.is_some()) {
@@ -480,248 +427,7 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
     }
 }
 
-fn parse(&ValueClosure(ref scope, ref values): &ValueClosure) -> Vec<(ScanState, Range<usize>)> {
-
-    // Allow nested macroexpansion (get order right -- 'inner first' for most params,
-    // 'outer first' for lazy/semi params. some inner-first commands will return stuff that needs
-    // to be re-expanded, if a ';'-command - but does this affect parallelism? etc)
-
-    // tODO: this is all super slow, and has way too much copying
-
-    let parsed = values
-    .iter()
-    .enumerate()
-    .scan(ScanState::Text, |state, (idx, v)| {
-        let ch = match v {
-            &Char(c) => Some(c),
-            _ => None
-        };
-        let sigil = scope.sigil;
-        let is_white = ch.map(|c| c.is_whitespace()).unwrap_or(false);
-        *state = match (*state, false, ch) {
-            (Text, _, Some(c)) => {
-                if c == sigil {
-                    StartSigil
-                } else {
-                    Text
-                }
-            },
-            (Text, _, _) => { Text },
-
-            (Sigil, _, Some(_))
-            | (StartSigil, _, Some(_)) => { CommandName },
-            // todo write more tests
-            (CommandName,_, Some(';')) => { Semi },
-            (Whitespace, _, Some(';')) => { Semi },
-            (CloseParen, _, Some(';')) => { Semi },
-            (Semi, _, Some(c)) => {
-                if c.is_whitespace() {
-                    Semi
-                } else {
-                    Semicolon
-                }
-            }
-            (Semi, _, _)
-            | (Semicolon, _, _) => {
-                Semicolon
-            },
-            (CommandName, _, Some('('))
-            | (Whitespace, _, Some('('))
-            | (CloseParen, _, Some('(')) => { Parens(0) },
-            (Parens(x), _, Some('(')) => { Parens(x + 1) },
-            (Parens(0), _, Some(')')) => { CloseParen },
-            (Parens(x), _, Some(')')) => { Parens(x - 1) },
-            
-            (CommandName, _, Some('{'))
-            | (Whitespace, _, Some('{'))
-            | (CloseParen, _, Some('{')) => { RawParens(0) },
-            (RawParens(x), _, Some('{')) => { println!("OPEN {:?}", x); RawParens(x + 1) },
-            (RawParens(0), _, Some('}')) => { CloseParen },
-            (RawParens(x), _, Some('}')) => { println!("CLOSE {:?}", x); RawParens(x - 1) },
-            (RawParens(x), _, Some(c)) => { RawParens(x) },
-
-
-            (Parens(x), _, w) => {
-                if w == Some(sigil) {
-                    Halt
-                } else {
-                    Parens(x)
-                }
-            },
-
-            (Parens(x), _, _) => { Parens(x) },
-            (RawParens(x), _, _) => { RawParens(x) },
-
-
-            (Halt, _, _) => { Halt },
-
-            (CommandName, _, Some(c)) => {
-                if c.is_alphabetic() || c == '_' {
-                    CommandName
-                } else if c.is_whitespace() {
-                    Whitespace
-                } else {
-                    Text
-                }
-            },
-            (Whitespace, _, Some(c))
-            | (CloseParen, _, Some(c)) => {
-                if c == sigil { Sigil }
-                else if c.is_whitespace() { Whitespace }
-                else { Text }
-            },
-
-            (Whitespace, _, None) => { Text }
-            (CloseParen, _, None) => { Text }
-            (CommandName, _, None) => { Text }
-
-            _ => {
-                panic!("Unhandled state change...");
-            }
-        };
-        Some((*state, v, idx))
-    })
-    .chain(std::iter::once((End, &Char(' '), 0)))
-    .scan((0, 0, Start),
-    |&mut(ref mut start, ref mut end, ref mut prev_state), (state, val, idx)| {
-        if *prev_state == End {
-            return None;
-        }
-        // get a proper debugger?
-        let matches = match(*prev_state, state) {
-            (Parens(x), Parens(y)) => { true }
-            (RawParens(x), RawParens(y)) => { true }
-            (x, y) => { x == y }
-        };
-        let mut result = None;
-        if state != End {
-            *end = idx;
-        } else {
-            *end += 1;
-        }
-        if !matches {
-            result = Some((*prev_state, (*start..*end)));
-            *start = idx;
-            *prev_state = state;
-        }
-        Some(result)
-    })
-    .flat_map(|x| { x })
-    .flat_map(|(state, r)| {
-        let mut range = r.clone();
-        let s = match state {
-            Parens(_) => Parens(0),
-            RawParens(_) => RawParens(0),
-            x => x
-        };
-        match s {
-            Parens(_)
-            | RawParens(_) => {
-                vec![(OpenParen, ((range.start)..(range.start+1))),
-                        (s, ((range.start+1)..(range.end))) ]
-            },
-            _ => {
-                vec![(state, range)]
-            }
-        }
-    })
-    .collect::<Vec<(ScanState, Range<usize>)>>();
-    parsed
-}
-
-enum Chunk<'f> {
-    CommandChunk(Vec<(ScanState, &'f [Atom])>),
-    TextChunk(&'f Atom)
-}
-use Chunk::*;
-
-fn arg_for_chunk<'f>(chunk: &Chunk<'f>, scope: Rc<Scope>) -> Vec<Value> {
-    match chunk {
-        &CommandChunk(ref parts) => { 
-            parts.iter().flat_map(|&(ref state, ref vals)| {
-                match *state {
-                    Parens(_) => Some(match &vals[0] {
-                        &Val(ref x) => x.clone(),
-                        &Char(_) => { Str(vals.iter().map(|x| { x.serialize() }).collect::<String>()  ) }
-                    }),
-                    RawParens(_)
-                    | Semicolon => Some(Closure(ValueClosure(scope.clone(),vals.to_vec()))),
-                    _ => None
-                }
-            }).collect()
-        },
-        _ => {panic!() }
-    }
-}
-
-fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<Atom>, scope: Rc<Scope>) -> Vec<Chunk<'f>> {
-    parsed.split(|&(s, _)| { s == StartSigil })
-          .map(|part| { part.iter().map(|&(ref s, ref x)| { (*s, &values[x.clone()]) }).collect::<Vec<(ScanState, &[Atom])>>() })
-            .flat_map(|parts| {
-                let mut chunks = vec![];
-                let mut pos = 0;
-                if parts[pos].0 == Start {
-                    while pos < parts.len() && parts[pos].0 != StartSigil && parts[pos].0 != Sigil {
-                        chunks.push(TextChunk(&values[pos]));
-                        pos += 1;
-                    }
-                }
-                while pos < parts.len() {
-                    let mut current_slice = &parts[pos..];
-
-                     // note - quadratic :(
-                    let oldparts = parts.clone();
-                    if(!scope.commands.contains_key(&
-                            current_slice.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>()
-                    )) {
-                        while !current_slice.is_empty() { 
-                            current_slice = current_slice.split_last().unwrap().1;
-                            if(scope.commands.contains_key(&
-                                current_slice.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>()
-                            )) {
-                                break;
-                            }                           
-                        }
-                        
-                        if current_slice.is_empty() {
-                            panic!("Could not find command... {:?} IE {:?} IN {:?}", oldparts, oldparts.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, x) }).collect::<Vec<CommandPart>>(), scope);
-                        } else {
-                            current_slice = current_slice.split_last().unwrap().1;
-                        }
-                    }
-                    // Hacky hacky hack
-                    while {
-                        match current_slice[current_slice.len()-1].0 {
-                            CloseParen
-                            | CommandName
-                            | Semicolon
-                            => {
-                                false
-                            },
-                            Halt => {panic!() },
-                            x => {
-                                println!("STRIPPING {:?}", x);
-                                current_slice = current_slice.split_last().unwrap().1;
-                                true
-                            }
-                        }
-                    } {}
-                    chunks.push(CommandChunk(current_slice
-                        .iter()
-                        .map(|&(ref s, x)| { (*s, x) })
-                        .collect()));
-                    
-                    pos += current_slice.len();
-                    while pos < parts.len() && parts[pos].0 != Sigil {
-                        chunks.push(TextChunk(&values[pos]));
-                        pos += 1;
-                    }
-                }
-                return chunks;
-            })
-    .collect()
-}
-
+//TODO handle EOF propelry
 fn default_scope() -> Scope {
     let mut scope = Scope {
         sigil: '#',
