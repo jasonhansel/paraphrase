@@ -5,31 +5,34 @@ use std::rc::Rc;
 use scope::Scope;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Tag {
-    Num
-}
+pub struct Tag(u64);
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct ValueList(pub Vec<Value>);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ValueChar(pub char);
 
 // should closures "know" about their parameters?
 #[derive(Clone)]
-pub struct ValueClosure(pub Rc<Scope>, pub Vec<Value>);
+pub struct ValueClosure(pub Rc<Scope>, pub Vec<Atom>);
 
-
-#[derive(Clone)]
+// A Value is something that can be used as a parameter to a macro,
+// or as a return value.
+#[derive(Clone, Debug)]
 pub enum Value {
-    Char(ValueChar),
-    List(ValueList),
-    Tagged(Tag,ValueList),
-    Closure(ValueClosure)
+    Str(String),
+    List(Vec<Value>),
+    Tagged(Tag,Box<Value>),
+    Closure(ValueClosure),
+    Bubble(ValueClosure) // <- gets auto-expanded when it reaches its original scope
+}
+
+// An Atom represents an "atomic" piece of text that is to be expanded.
+#[derive(Clone, Debug)]
+pub enum Atom {
+    Char(char),
+    Val(Value)
 }
 
 pub use Value::*;
-
+pub use Atom::*;
+/*
 impl fmt::Debug for ValueList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -47,7 +50,7 @@ impl fmt::Debug for ValueList {
         Ok(())
     }
 }
-
+*/
 impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
@@ -67,7 +70,7 @@ impl fmt::Debug for ValueClosure {
         Ok(())
     }
 }
-
+/*
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -90,11 +93,11 @@ impl fmt::Debug for Value {
         Ok(())
     }
 }
-
+*/
 impl PartialEq for Value {
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
-            (&Char(a), &Char(b)) => { a == b },
+            (&Str(ref a), &Str(ref b)) => { a == b },
             (&List(ref a), &List(ref b)) => { a == b },
             (&Tagged(ref at, ref ad), &Tagged(ref bt, ref bd)) => {
                 at == bt && ad == bd
