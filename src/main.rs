@@ -511,6 +511,7 @@ fn expand_fully(closure: &ValueClosure)
         let closure = ValueClosure(scope.clone(), after.clone());
         let iparse = parse(&closure);
         let new_chunks = get_chunks(&iparse, &after, scope.clone());
+        // FIXME: expand_chunk runs even if halt received
         v.push(expand_chunk(&new_chunks[0], scope.clone()));
         v.extend_from_slice((&after[(match &new_chunks[0]{
             &CommandChunk(ref x) => x.len(),
