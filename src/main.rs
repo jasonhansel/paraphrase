@@ -109,16 +109,11 @@ fn part_for_scan(scan: ScanState, data: &[Atom]) -> Option<CommandPart> {
 
 
 fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
-   let atoms : Vec<Atom> = match command {
+   match command {
         &Command::Rescope => {
             match(&args[0], &args[1]) {
-                (&List(ref v), &Closure(ValueClosure(_, ref contents))) => {
-                    match v.first() {
-                        Some(&Closure(ValueClosure(ref inner_scope, _))) => { vec![
-                            Val( Closure(ValueClosure(inner_scope.clone(), contents.clone())) )
-                        ] },
-                        _ => {panic!() }
-                    }
+                (&Closure(ValueClosure(ref inner_scope, _)), &Closure(ValueClosure(_, ref contents))) => {
+                     Closure(ValueClosure(inner_scope.clone(), contents.clone()))
                 },
                 _ => {panic!() }
             }
@@ -126,14 +121,14 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
         &Command::Expand => {
             match &args[0] {
                 &Closure(ref c) => {
-                    new_expand(c)
+                    retval_to_val(new_expand(c))
                 },
                 _ => {panic!("ARG {:?}", args[0]); }
             }
         }
         &Command::Immediate(ref x) => {
             println!("IMMED {:?}", x);
-            vec![ Val(x.clone()) ]
+            x.clone()
         },
         &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
             // todo handle args
@@ -148,7 +143,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                 // or a Tagged). coerce sometimes?
                 new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
             }
-            new_expand(&ValueClosure(Rc::new(new_scope), contents.clone()))
+            retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), contents.clone())))
         },
         &Command::UserHere(ref arg_names, ref contents) => { 
             let inner_scope = scope;
@@ -162,7 +157,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                 // or a Tagged). coerce sometimes?
                 new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
             }
-            new_expand(&ValueClosure(Rc::new(new_scope), contents.clone()))
+            retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), contents.clone())))
  
             // todo handle args
             // let closure = ValueClosure(scope.clone(), cmd_data.clone());
@@ -194,7 +189,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                         // TODO: fix scpoe issues
                         closure.clone()
                     ));
-                    new_expand(&ValueClosure(Rc::new(new_scope), to_expand.clone()))
+                    retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), to_expand.clone())))
                 },
                 _ => {
                     panic!("Invalid state")
@@ -210,13 +205,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                 _ => { panic!("Invalid :("); }
             }
         }
-    };
-   return List(atoms.into_iter().map(|x| {
-       match x {
-           Char(x) => Str(x.to_string()),
-           Val(x) => x
-        }
-    }).collect())
+    }
 }
 
 
@@ -339,6 +328,29 @@ fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
     parse_text(values, 0, scope.clone()).0
 }
 
+fn retval_to_val(atoms: Vec<Atom>) -> Value {
+    let test = atoms.iter().map(|x| { match x {
+        &Char(x) => x,
+                _ => {'%'}
+            } }).collect::<String>();
+            if test.contains("%") {
+               let vals = atoms.iter().flat_map(|x| { match x {
+                   &Val(ref x) => { Some(x.clone()) },
+                   &Char(' ') => {None },
+                   _ => { panic!("NYI {:?}", atoms) }
+                } }).collect::<Vec<Value>>();
+               if vals.len() == 1 {
+                   vals[0].clone()
+                       // TODO fix this up
+                } else {
+                    Value::List(vals)
+                }
+            } else {
+                Value::Str(test)
+            }
+
+}
+
 fn parens_to_arg(tokens: Vec<Token>) -> Value {
             let test = tokens.iter().map(|x| { match x {
                 &Token::Text(&Char(ref x)) => x.clone(),
@@ -438,10 +450,11 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
             None => {
                 return parsed.into_iter().map(|x| {
                     match x {
-                        Token::Text(c) => c,
-                        _ => { panic!("Failure..."); }
+                        Token::Text(c) => c.clone(),
+                        Token::OwnedText(c) => c,
+                        _ => { panic!("Failure... {:?}", x); }
                     }
-                }).cloned().collect()
+                }).collect::<Vec<Atom>>()
             }
         }
     }
