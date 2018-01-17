@@ -124,6 +124,9 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                 (&Str(ref name_args),
                 &Closure(ref closure),
                 &Closure(ValueClosure(_, ref to_expand))) => {
+                    if name_args.is_empty() {
+                        panic!("Empty define");
+                    }
                     // TODO: custom arguments, more tests
                     let mut parts = vec![];
                     let mut params = vec![];
@@ -183,95 +186,129 @@ enum Token<'f> {
 }
 
 
-fn parse_command<'f>(mut values: &'f [Atom], scope: Rc<Scope>) -> (Vec<Token<'f>>, &'f [Atom]) {
-    let mut tokens = vec![];
-    let mut parts : Vec<CommandPart> = vec![];
-    let mut ident = "".to_owned();
-    // TODO: multi-part commands, variadic macros (may never impl - too error prone)
-    while let Some((next, v)) = values.split_first() {
-        if let Some(chr) = atom_to_char(next) {
-            if chr.is_alphabetic() || chr == '_' {
-                ident.push(chr);
-                values = v;
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    tokens.push(Token::Ident(ident.clone()));
-    println!("AT {:?} REST {:?}", ident, values);
-    parts.push(Ident(ident));
-    while !scope.commands.contains_key(&parts) {
-        let (next, v) = values.split_first().unwrap();
-        let chr = atom_to_char(next);
-        if chr.map(|x| x.is_whitespace()) == Some(true) {
-            values = v;
-        } else if chr == Some('(') {
-            tokens.push(Token::StartParen);
-            let (inner_tokens, future_atoms) = parse_text(v, 1, scope.clone());
-            parts.push(Param);
-            tokens.extend(inner_tokens.into_iter());
-            tokens.push(Token::EndParen);
-            println!("Into the future...");
-            values = future_atoms;
-        } else if chr == Some(';') {
-            parts.push(Param);
-            tokens.push(Token::Semicolon(v));
-            values = &[];
-            break;
-        } else if chr == Some('{') {
-            let mut raw_level = 0;
-            let mut pos = 0;
-            while let Some(next) = values.get(pos) {
-                match (raw_level, atom_to_char(next)) {
-                    (_, Some('{')) => { pos += 1; raw_level += 1 }
-                    (1, Some('}')) => { break; }
-                    (_, Some('}')) => { pos += 1; raw_level -= 1; }
-                    (_, _) => { pos += 1; }
-                }
-            }
-            parts.push(Param);
-            tokens.push(Token::RawParam(&values[1..pos]));
-            values = &values[(pos+1)..];
-        } else {
-            panic!("Failed {:?}", parts);
-        }
-        println!("LOOKING... {:?}", parts);
-    }
-    (tokens, values)
+#[derive(Debug)]
+enum ParseEntry {
+    Text(u8, bool), // bool is true if in a call
+    Command(Vec<CommandPart>)
 }
 
 fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Token>, &[Atom]) {
     let mut tokens = vec![];
-    let mut paren_level : u8 = 0;
-    while let Some((next, v)) = values.split_first() {
-        let chr = atom_to_char(next);
-        if chr == Some(scope.sigil) {
-            let (cmd, rest) = parse_command(&values[1..], scope.clone());
-            println!("PARSED {:?} {:?} WITH {:?}", paren_level, cmd, rest);
-            tokens.extend(cmd.into_iter());
-            values = rest;
-        } else if chr == Some('(') {
-            paren_level += 1;
-            values = v;
-        } else if chr == Some(')') {
-            if paren_level > 0 {
-                paren_level -= 1;
-                values = v;
-            } else if call_level > 0 {
-                values = v;
-                break;
+    let mut stack : Vec<ParseEntry> = vec![
+        ParseEntry::Text(0, false)
+    ];
+    while let Some(current) = stack.pop() { match current {
+        ParseEntry::Command(mut parts) => {
+            // TODO: multi-part commands, variadic macros (may never impl - too error prone)
+            // TODO: breaks intermacro text
+            if scope.commands.contains_key(&parts) { 
+                // continue to next work item
+            } else if parts.len() == 0 {
+                println!("Hell B {:?}", values);
+
+                let mut ident = "".to_owned();
+                while let Some((next, v)) = values.split_first() {
+                    if let Some(chr) = atom_to_char(next) {
+                        if chr.is_alphabetic() || chr == '_' || chr == '#' {
+                            println!("HERE");
+                            ident.push(chr);
+                            values = v;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if !ident.is_empty() {
+                    println!("I think I can: {:?}", ident);
+                    tokens.push(Token::Ident(ident.clone()));
+                    parts.push(Ident(ident));
+                    stack.push(ParseEntry::Command(parts));
+                    println!("STACK: {:?}", stack);
+                } else {
+                    stack.push(ParseEntry::Command(parts));
+                    panic!("Other Hell {:?} {:?} {:?}", values, ident, stack);
+                }
             } else {
-                tokens.push(Token::Text(next));
-                values = v;
+                println!("Hell A");
+                let (next, v) = values.split_first().unwrap();
+                let chr = atom_to_char(next);
+                if chr.map(|x| x.is_whitespace()) == Some(true) {
+                    println!("Boring!");
+                    values = v;
+                    stack.push(ParseEntry::Command(parts));
+                } else if chr == Some('(') {
+                    tokens.push(Token::StartParen);
+                    values = v;
+                    println!("Argument: X{:?}X", v);
+                    stack.push(ParseEntry::Command(parts));
+                    stack.push(ParseEntry::Text(0, true));
+                    println!("Into the future...");
+                } else if chr == Some(')') {
+                    println!("hello world");
+                    values = v;
+                    println!("Kicking: {:?}", Token::EndParen);
+                    tokens.push(Token::EndParen);
+                    parts.push(Param);
+                    stack.push(ParseEntry::Command(parts));
+                } else if chr == Some(';') {
+                    println!("hello world 2");
+                    parts.push(Param);
+                    tokens.push(Token::Semicolon(v));
+                    values = &[];
+                    break;
+                } else if chr == Some('{') {
+                    println!("hello world 3");
+                    let mut raw_level = 0;
+                    let mut pos = 0;
+                    while let Some(next) = values.get(pos) {
+                        match (raw_level, atom_to_char(next)) {
+                            (_, Some('{')) => { pos += 1; raw_level += 1 }
+                            (1, Some('}')) => { break; }
+                            (_, Some('}')) => { pos += 1; raw_level -= 1; }
+                            (_, _) => { pos += 1; }
+                        }
+                    }
+                    parts.push(Param);
+                    tokens.push(Token::RawParam(&values[1..pos]));
+                    values = &values[(pos+1)..];
+                    stack.push(ParseEntry::Command(parts));
+                } else {
+                    panic!("Failed {:?} {:?}", parts, scope);
+                }
             }
-        } else {
-            tokens.push(Token::Text(next));
-            values = v;
+        },
+        ParseEntry::Text(paren_level, in_call) => {
+            if let Some((next, v)) = values.split_first() {
+                let chr = atom_to_char(next);
+                if chr == Some(scope.sigil) {
+                    values = v;
+                    stack.push(ParseEntry::Text(paren_level, in_call));
+                    stack.push(ParseEntry::Command(vec![]));
+                } else if chr == Some('(') {
+                    values = v;
+                    stack.push(ParseEntry::Text(paren_level + 1, in_call));
+                } else if chr == Some(')') {
+                    if paren_level > 0 {
+                        values = v;
+                        stack.push(ParseEntry::Text(paren_level - 1, in_call));
+                    } else if in_call {
+                    } else {
+                        tokens.push(Token::Text(next));
+                        values = v;
+                        stack.push(ParseEntry::Text(paren_level, in_call));
+                    }
+                } else {
+                    println!("Kicking: {:?}", next);
+                    tokens.push(Token::Text(next));
+                    values = v;
+                    stack.push(ParseEntry::Text(paren_level, in_call));
+                }
+            }
         }
-    }
+    } }
+    println!("LEFT {:?}", tokens);
     (tokens, values)
 }
 
@@ -321,28 +358,28 @@ fn retval_to_val(atoms: Vec<Atom>) -> Value {
 }
 
 fn parens_to_arg(tokens: Vec<Token>) -> Value {
-            let test = tokens.iter().map(|x| { match x {
-                &Token::Text(&Char(ref x)) => x.clone(),
-                &Token::OwnedText(Char(ref x)) => x.clone(),
-                _ => {'%'}
-            } }).collect::<String>();
-            if test.contains("%") {
-               let vals = tokens.iter().flat_map(|x| { match x {
-                    &Token::Text(&Val(ref x)) => { Some(x.clone()) },
-                    &Token::OwnedText(Val(ref x)) => { Some(x.clone()) }, 
-                    &Token::Text(&Char(' ')) => {None },
-                    &Token::OwnedText(Char(' ')) => { None },
-                    _ => { panic!("NYI {:?}", tokens) }
-                } }).collect::<Vec<Value>>();
-               if vals.len() == 1 {
-                   vals[0].clone()
-                       // TODO fix this up
-                } else {
-                    Value::List(vals)
-                }
-            } else {
-                Value::Str(test)
-            }
+    let test = tokens.iter().map(|x| { match x {
+        &Token::Text(&Char(ref x)) => x.clone(),
+        &Token::OwnedText(Char(ref x)) => x.clone(),
+        _ => {'%'}
+    } }).collect::<String>();
+    if test.contains("%") {
+       let vals = tokens.iter().flat_map(|x| { match x {
+            &Token::Text(&Val(ref x)) => { Some(x.clone()) },
+            &Token::OwnedText(Val(ref x)) => { Some(x.clone()) }, 
+            &Token::Text(&Char(' ')) => {None },
+            &Token::OwnedText(Char(' ')) => { None },
+            _ => { panic!("NYI {:?}", tokens) }
+        } }).collect::<Vec<Value>>();
+       if vals.len() == 1 {
+           vals[0].clone()
+               // TODO fix this up
+        } else {
+            Value::List(vals)
+        }
+    } else {
+        Value::Str(test)
+    }
 }
 
 fn raw_to_arg(tokens: &[Atom], scope: Rc<Scope>) -> Value {
@@ -400,12 +437,12 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                         break;
                     }
                 }
+                println!("GOING FROM {:?}", parsed);
                 if let Some((end_idx, result)) = out {
                     // may need to re-parse in some cases?
                     let mut new_atoms = parsed[..start_idx].to_vec();
                     new_atoms.push(Token::OwnedText(result));
                     new_atoms.extend(parsed[(end_idx+1)..].to_vec());
-                    println!("GOING FROM {:?}", parsed);
                     println!("GOING TO {:?}", new_atoms);
                     // NOTE: with ;-commands, must *reparse* the whole string,
                     // in case we got interrupted mid-argument TODO
