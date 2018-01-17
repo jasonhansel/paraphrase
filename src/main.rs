@@ -30,6 +30,9 @@
 // TODO: auto expand Exclosures when they reach the scope that they contain (and are returned from
 // a ;-command).
 
+
+// NOTE: expanding from the right  === expanding greedily
+
 mod value;
 mod scope;
 
@@ -219,6 +222,123 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
            Val(x) => x
         }
     }).collect())
+}
+
+
+fn atom_to_char(atom: &Atom) -> Option<char> {
+    match atom {
+        &Char(c) => Some(c),
+        _ => None
+    }
+}
+
+#[derive(Clone, Debug)]
+enum Token<'f> {
+    Ident(String),
+    StartParen,
+    EndParen,
+    RawParam(&'f [Atom]),
+    Semicolon(&'f [Atom]),
+    Text(&'f Atom)
+}
+
+
+fn parse_command<'f>(mut values: &'f [Atom], scope: Rc<Scope>) -> (Vec<Token<'f>>, &'f [Atom]) {
+    let mut tokens = vec![];
+    let mut parts : Vec<CommandPart> = vec![];
+    let mut paren_level : u8 = 0;
+    let mut ident = "".to_owned();
+    // TODO: multi-part commands, variadic macros (may never impl - too error prone)
+    while let Some((next, v)) = values.split_first() {
+        if let Some(chr) = atom_to_char(next) {
+            if chr.is_alphabetic() || chr == '_' {
+                ident.push(chr);
+                values = v;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    tokens.push(Token::Ident(ident.clone()));
+    println!("AT {:?} REST {:?}", ident, values);
+    parts.push(Ident(ident));
+    while !scope.commands.contains_key(&parts) {
+        let (next, v) = values.split_first().unwrap();
+        let chr = atom_to_char(next);
+        if chr.map(|x| x.is_whitespace()) == Some(true) {
+            values = v;
+        } else if chr == Some('(') {
+            tokens.push(Token::StartParen);
+            let (inner_tokens, future_atoms) = parse_text(v, 1, scope.clone());
+            parts.push(Param);
+            tokens.extend(inner_tokens.into_iter());
+            tokens.push(Token::EndParen);
+            values = future_atoms;
+
+        } else if chr == Some(';') {
+            parts.push(Param);
+            tokens.push(Token::Semicolon(v));
+            values = v;
+            break;
+        } else if chr == Some('{') {
+            let mut raw_level = 0;
+            let mut pos = 0;
+            while let Some(next) = values.get(pos) {
+                match (raw_level, atom_to_char(next)) {
+                    (_, Some('{')) => { pos += 1; raw_level += 1 }
+                    (1, Some('}')) => { break; }
+                    (_, Some('}')) => { pos += 1; raw_level -= 1; }
+                    (_, _) => { pos += 1; }
+                }
+            }
+            parts.push(Param);
+            tokens.push(Token::RawParam(&values[1..pos]));
+            values = &values[(pos+1)..];
+        }
+        println!("LOOKING... {:?}", parts);
+    }
+    (tokens, values)
+}
+
+fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Token>, &[Atom]) {
+    let mut tokens = vec![];
+    let mut paren_level : u8 = 0;
+    while let Some((next, v)) = values.split_first() {
+        let chr = atom_to_char(next);
+        if chr == Some(scope.sigil) {
+            let (cmd, rest) = parse_command(&values[1..], scope.clone());
+            println!("PARSED {:?} {:?} WITH {:?}", paren_level, cmd, rest);
+            tokens.extend(cmd.into_iter());
+            values = rest;
+        } else if chr == Some('(') {
+            paren_level += 1;
+            values = v;
+        } else if chr == Some(')') {
+            if paren_level > 0 {
+                paren_level -= 1;
+                values = v;
+            } else if call_level > 0 {
+                values = v;
+                break;
+            } else {
+                panic!("Weird end paren");
+                tokens.push(Token::Text(next));
+                values = v;
+            }
+        } else {
+            tokens.push(Token::Text(next));
+            values = v;
+        }
+    }
+    (tokens, values)
+}
+
+fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
+        -> Vec<Token> {
+    let call_stack : Vec<Option<Vec<CommandPart>>> = vec! [];
+    parse_text(values, 0, scope.clone()).0
 }
 
 fn parse(&ValueClosure(ref scope, ref values): &ValueClosure) -> Vec<(ScanState, Range<usize>)> {
@@ -535,9 +655,7 @@ fn expand_fully(closure: &ValueClosure)
  */
 }
 
-fn expand(atoms : Vec<Atom>) -> Vec<Atom> {
-    println!("Expand...");
-    std::io::stdout().flush().unwrap();
+fn default_scope() -> Scope {
     let mut scope = Scope {
         sigil: '#',
         commands: HashMap::new()
@@ -555,8 +673,16 @@ fn expand(atoms : Vec<Atom>) -> Vec<Atom> {
     );
     scope.commands.insert(vec![ Ident("rescope".to_owned()), Param, Param ],
         Command::Rescope
+    );scope.commands.insert(vec![ Ident("z".to_owned())],
+        Command::Rescope // a test
     );
-    expand_fully(&ValueClosure(Rc::new(scope), atoms))
+    scope
+}
+
+fn expand(atoms : Vec<Atom>) -> Vec<Atom> {
+    println!("Expand...");
+    std::io::stdout().flush().unwrap();
+    expand_fully(&ValueClosure(Rc::new(default_scope()), atoms))
     // note - make sure recursive macro defs work
 }
 
@@ -576,10 +702,16 @@ impl Atom {
 
 #[test]
 fn it_works() {
+    println!("{:?}", new_parse(&ValueClosure(Rc::new(default_scope()),
+            "(#expand(#expand(#z))#expand{#expand{#z}})".chars().map(|x| { Char(x) })
+            .collect::<Vec<Atom>>()
+    )));
+    /*
     let chars = read_file("tests/1-simple.pp").unwrap();
     let results = expand(chars);
     let out = results.iter().map(|x| { x.serialize() }).collect::<String>();
     println!("||\n{}||", out);
+    */
     // ISSUE: extra whitespace at end of output
  //   assert_eq!(out, "Hello world!\n");
 }
