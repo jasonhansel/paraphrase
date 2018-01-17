@@ -128,7 +128,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                 &Closure(ref c) => {
                     new_expand(c)
                 },
-                _ => {panic!("ARG {:?}", args); }
+                _ => {panic!("ARG {:?}", args[0]); }
             }
         }
         &Command::Immediate(ref x) => {
