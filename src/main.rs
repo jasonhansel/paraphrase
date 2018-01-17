@@ -31,6 +31,8 @@
 // a ;-command).
 
 
+// TODO fix bugs in test
+
 // NOTE: expanding from the right  === expanding greedily
 
 mod value;
@@ -328,13 +330,21 @@ fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
     parse_text(values, 0, scope.clone()).0
 }
 
+impl Value {
+    fn to_string(&self) -> String {
+        match self {
+            &Str(ref x) => x.to_owned(),
+            &Tagged(_, ref x) => x.to_string(),
+            _ => {panic!("Cannot coerce value into string!")}
+        }
+    }
+}
+
 fn atoms_to_string<'f>(atoms: &'f [Atom]) -> String {
-    atoms.into_iter().fold("".to_owned(), |s, atom| { match atom {
+    atoms.into_iter().fold("".to_owned(), |mut s, atom| { match atom {
         &Char(x) => { s.push(x) }
-        &Val(Str(x)) => { s.push_str(&x[..]) }
-        &Val(Tagged(_, ref x)) => { s.push_str(atoms_to_string(&[Val(x)])) }
-        &Val(_) => { panic!("Cannot coerce value into string!") }
-    }; s})
+        &Val(ref x) => { s.push_str(&x.to_string()[..]) }
+    }; s })
 }
 
 fn retval_to_val(atoms: Vec<Atom>) -> Value {
@@ -342,17 +352,18 @@ fn retval_to_val(atoms: Vec<Atom>) -> Value {
         &Char(x) => !x.is_whitespace(),
         &Val(_) => false
     });
-    let mut values = atoms.iter().flat_map(|atom| { match atom {
+    let mut non_strings = atoms.iter().flat_map(|atom| { match atom {
         &Char(_) => None,
+        &Val(Str(_)) => None,
         &Val(ref val) => Some(val)
     } });
-    match (has_non_whitespace, values.next()) {
+    match (has_non_whitespace, non_strings.next()) {
         (true, _) | (false, None) => {
             Str(atoms_to_string(&atoms[..]))
         }
         (false, Some(x)) => {
-            if values.next() == None {
-                panic!("Cannot create implicit lists in macro return values!");
+            if non_strings.next().is_some() {
+                panic!("Cannot create implicit lists in macro return values. Got: {:?}", atoms);
             } else {
                 x.clone()
             }
@@ -711,78 +722,6 @@ fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<A
     .collect()
 }
 
-fn expand_chunk<'f>(chunk: &Chunk<'f>, scope: Rc<Scope>) -> Atom {
-    match chunk {
-        &TextChunk(v) => { v.clone() },
-        &CommandChunk(ref parts) => {
-            let p = parts.iter().flat_map(|&(ref i, ref x)|{ part_for_scan(*i, x) }).collect::<Vec<CommandPart>>();
-                println!("P {:?}", p);
-            Val(
-                eval(
-                    scope.clone(),
-                    scope.commands.get(
-                        &(
-                            p
-                        )[..]
-                    ).unwrap(),
-                    &arg_for_chunk(&chunk, scope.clone())[..]
-                )
-            )
-        }
-    }
-}
-
-fn expand_fully(closure: &ValueClosure)
-    -> Vec<Atom> {
-    let mut parsed = parse(closure);
-    let &ValueClosure(ref scope, ref vold) = closure;
-    let mut values = vold.clone();
-
- //   println!("PARSED {:?}", parsed.clone().iter().map(|&(ref s, ref x)| (s.clone(), values[x.clone().start .. x.clone().end].to_vec())).collect::<Vec<(ScanState, Vec<Value>)>>() ) ;
-
-    /*.filter(|&(state,  _)| {
-        // TODO keep whitespace at end of macro
-        state != Whitespace &&
-        state != Start &&
-        state != Sigil &&
-        state != CloseParen &&
-        state != Semi
-    }) */
-    // note -- only Halt if we're sure it's in the current invocation?
-    // ^ and enable parallelism if not a ;-command
-    // ^ this may be impossible in the general case :(
-    while let Some(halter) = parsed.iter().position(|&(s, _)| { s == Halt }).map(|pos| { parsed[pos].1.start }) {
-        std::mem::drop(parsed); // a test
-        let mut v = values.clone();
-        let mut after = v.split_off(halter);
-        println!("HERE {:?} {:?}", v, after);
-        let closure = ValueClosure(scope.clone(), after.clone());
-        let iparse = parse(&closure);
-        let new_chunks = get_chunks(&iparse, &after, scope.clone());
-        // FIXME: expand_chunk runs even if halt received
-        v.push(expand_chunk(&new_chunks[0], scope.clone()));
-        v.extend_from_slice((&after[(match &new_chunks[0]{
-            &CommandChunk(ref x) => x.len(),
-            _ => { panic!() }
-        })..]));
-        values = v.clone();
-        parsed = parse(&ValueClosure(scope.clone(), v));
-    }
-    return get_chunks(&parsed, &values, scope.clone()).into_iter().map(|x| {
-        expand_chunk(&x, scope.clone())
-    }).collect();
-    
-/*
-    match (iter, cmd_here.cmd.clone()) {
-        ( &mut ValueList(ref mut vl), Some(ValueClosure(_, ValueList(ref mut command))) ) => {
-            *vl = command.iter().chain(vl.iter()).cloned().collect::<Vec<Value>>();
-            println!("Done expanding...");
-        },
-        _ => { panic!("Failed :("); }
-    }
- */
-}
-
 fn default_scope() -> Scope {
     let mut scope = Scope {
         sigil: '#',
@@ -801,19 +740,9 @@ fn default_scope() -> Scope {
     );
     scope.commands.insert(vec![ Ident("rescope".to_owned()), Param, Param ],
         Command::Rescope
-    );scope.commands.insert(vec![ Ident("z".to_owned())],
-        Command::Rescope // a test
-    );
+    ); 
     scope
 }
-
-fn expand(atoms : Vec<Atom>) -> Vec<Atom> {
-    println!("Expand...");
-    std::io::stdout().flush().unwrap();
-    expand_fully(&ValueClosure(Rc::new(default_scope()), atoms))
-    // note - make sure recursive macro defs work
-}
-
 impl Atom {
     fn serialize(&self) -> String {
         (match self {
@@ -840,5 +769,6 @@ fn it_works() {
 }
 
 fn main() {
+    // TODO cli
     println!("Hello, world!");
 }
