@@ -328,27 +328,36 @@ fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
     parse_text(values, 0, scope.clone()).0
 }
 
-fn retval_to_val(atoms: Vec<Atom>) -> Value {
-    let test = atoms.iter().map(|x| { match x {
-        &Char(x) => x,
-                _ => {'%'}
-            } }).collect::<String>();
-            if test.contains("%") {
-               let vals = atoms.iter().flat_map(|x| { match x {
-                   &Val(ref x) => { Some(x.clone()) },
-                   &Char(' ') => {None },
-                   _ => { panic!("NYI {:?}", atoms) }
-                } }).collect::<Vec<Value>>();
-               if vals.len() == 1 {
-                   vals[0].clone()
-                       // TODO fix this up
-                } else {
-                    Value::List(vals)
-                }
-            } else {
-                Value::Str(test)
-            }
+fn atoms_to_string<'f>(atoms: &'f [Atom]) -> String {
+    atoms.into_iter().fold("".to_owned(), |s, atom| { match atom {
+        &Char(x) => { s.push(x) }
+        &Val(Str(x)) => { s.push_str(&x[..]) }
+        &Val(Tagged(_, ref x)) => { s.push_str(atoms_to_string(&[Val(x)])) }
+        &Val(_) => { panic!("Cannot coerce value into string!") }
+    }; s})
+}
 
+fn retval_to_val(atoms: Vec<Atom>) -> Value {
+    let has_non_whitespace = atoms.iter().any(|x| match x {
+        &Char(x) => !x.is_whitespace(),
+        &Val(_) => false
+    });
+    let mut values = atoms.iter().flat_map(|atom| { match atom {
+        &Char(_) => None,
+        &Val(ref val) => Some(val)
+    } });
+    match (has_non_whitespace, values.next()) {
+        (true, _) | (false, None) => {
+            Str(atoms_to_string(&atoms[..]))
+        }
+        (false, Some(x)) => {
+            if values.next() == None {
+                panic!("Cannot create implicit lists in macro return values!");
+            } else {
+                x.clone()
+            }
+        }
+    }
 }
 
 fn parens_to_arg(tokens: Vec<Token>) -> Value {
