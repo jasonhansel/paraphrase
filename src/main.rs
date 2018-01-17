@@ -79,7 +79,6 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
             match &args[0] {
                 &Closure(ref c) => {
                     let rv = retval_to_val(new_expand(c));
-                    println!("GIVING {:?}", rv);
                     rv
                 },
                 _ => {panic!("ARG {:?}", args[0]); }
@@ -142,7 +141,6 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                             parts.push(Ident(part.to_owned()));
                         }
                     }
-                    println!("Definining {:?}", parts);
                     // make_mut clones as nec.
                     let mut new_scope = dup_scope(scope);
                     // circular refs here?
@@ -195,7 +193,10 @@ enum ParseEntry {
     Command(Vec<CommandPart>)
 }
 
-fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Token>, &[Atom]) {
+// TODO fix perf - rem compile optimized
+
+fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
+    let mut values = &oldv[..];
     let mut tokens = vec![];
     let mut stack : Vec<ParseEntry> = vec![
         ParseEntry::Text(0, false)
@@ -207,13 +208,11 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
             if scope.commands.contains_key(&parts) { 
                 // continue to next work item
             } else if parts.len() == 0 {
-                println!("Hell B {:?}", values);
 
                 let mut ident = "".to_owned();
                 while let Some((next, v)) = values.split_first() {
                     if let Some(chr) = atom_to_char(next) {
                         if chr.is_alphabetic() || chr == '_' || chr == '#' {
-                            println!("HERE");
                             ident.push(chr);
                             values = v;
                         } else {
@@ -224,59 +223,46 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
                     }
                 }
                 if !ident.is_empty() {
-                    println!("I think I can: {:?}", ident);
                     tokens.push(Token::Ident(ident.clone()));
                     parts.push(Ident(ident));
                     stack.push(ParseEntry::Command(parts));
-                    println!("STACK: {:?}", stack);
                 } else {
                     stack.push(ParseEntry::Command(parts));
                     panic!("Other Hell {:?} {:?} {:?}", values, ident, stack);
                 }
             } else {
-                println!("Hell A");
                 let (next, v) = values.split_first().unwrap();
                 let chr = atom_to_char(next);
                 if chr.map(|x| x.is_whitespace()) == Some(true) {
-                    println!("Boring!");
                     values = v;
                     stack.push(ParseEntry::Command(parts));
                 } else if chr == Some('(') {
                     tokens.push(Token::StartParen);
                     values = v;
-                    println!("Argument: X{:?}X", v);
                     stack.push(ParseEntry::Command(parts));
                     stack.push(ParseEntry::Text(0, true));
-                    println!("Into the future...");
                 } else if chr == Some(')') {
-                    println!("hello world");
                     values = v;
-                    println!("Kicking: {:?}", Token::EndParen);
                     tokens.push(Token::EndParen);
                     parts.push(Param);
                     stack.push(ParseEntry::Command(parts));
                 } else if chr == Some(';') {
-                    println!("hello world 2");
                     parts.push(Param);
                     tokens.push(Token::Semicolon(v));
-                    values = &[];
-                    break;
+                    stack.clear();
                 } else if chr == Some('{') {
-                    println!("hello world 3");
                     let mut raw_level = 0;
-                    let mut pos = 0;
-                    while let Some(next) = values.get(pos) {
-                        match (raw_level, atom_to_char(next)) {
-                            (_, Some('{')) => { pos += 1; raw_level += 1 }
-                            (1, Some('}')) => { break; }
-                            (_, Some('}')) => { pos += 1; raw_level -= 1; }
-                            (_, _) => { pos += 1; }
-                        }
-                    }
+                    let mut split_values = values.splitn(2, |next| {
+                        raw_level +=  match (atom_to_char(next)) {
+                            Some('{') => 1,
+                            Some('}') => -1,
+                            _ => 0
+                        };
+                        raw_level == 0
+                    });
                     parts.push(Param);
-                    tokens.push(Token::RawParam(&values[1..pos]));
-                    println!("RAWPAR {:?}", &values[1..pos]);
-                    values = &values[(pos+1)..];
+                    tokens.push(Token::RawParam( &(split_values.next().unwrap())[1..] ));
+                    values = split_values.next().unwrap();
                     stack.push(ParseEntry::Command(parts));
                 } else {
                     panic!("Failed {:?} {:?}", parts, scope);
@@ -304,7 +290,6 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
                         stack.push(ParseEntry::Text(paren_level, in_call));
                     }
                 } else {
-                    println!("Kicking: {:?}", next);
                     tokens.push(Token::Text(next));
                     values = v;
                     stack.push(ParseEntry::Text(paren_level, in_call));
@@ -312,12 +297,7 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
             }
         }
     } }
-    println!("LEFT {:?}", tokens);
-    (tokens, values)
-}
-
-fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure) -> Vec<Token> {
-    parse_text(values, 0, scope.clone()).0
+    tokens
 }
 
 impl Value {
@@ -402,7 +382,6 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
         for idx in 0..(parsed.len()) {
             if let Token::Ident(_) = parsed[idx] {
                 last = Some(idx);
-                println!("STARTIDX {:?}", idx);
             }
         }
         match last {
@@ -412,7 +391,6 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                 let mut results : Vec<Value> = vec![];
                 let mut out = None;
                 for idx in start_idx..parsed.len() {
-                    println!("Adding {:?}", parsed[idx]);
                     // NB cannot contain any other commands - hence no nested parens
                     match (&parsed[idx], in_parens.is_some()) {
                         (&Token::Ident(ref id), false) => { parts.push(Ident( id.clone() )) },
@@ -431,25 +409,21 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                         (&Token::Semicolon(c), false) => { results.push(raw_to_arg(c, scope.clone() )); parts.push(Param); },
                         (_, _) => { panic!("Could not handle {:?} {:?} in {:?}", parsed[idx], in_parens.clone(), parsed); }
                     }
-                    println!("TRYING {:?} {:?}", parts, scope);
                     if let Some(command) = scope.commands.get(&parts) {
                         let ev = eval(
                             scope.clone(),
                             command,
                             &results[..]
                         );
-                        println!("EV {:?}", ev);
                         out = Some((idx, Val(ev)));
                         break;
                     }
                 }
-                println!("GOING FROM {:?}", parsed);
                 if let Some((end_idx, result)) = out {
                     // may need to re-parse in some cases?
                     let mut new_atoms = parsed[..start_idx].to_vec();
                     new_atoms.push(Token::OwnedText(result));
                     new_atoms.extend(parsed[(end_idx+1)..].to_vec());
-                    println!("GOING TO {:?}", new_atoms);
                     // NOTE: with ;-commands, must *reparse* the whole string,
                     // in case we got interrupted mid-argument TODO
                     parsed = new_atoms;

@@ -32,7 +32,6 @@ pub struct Scope {
 pub fn dup_scope(scope : Rc<Scope>) -> Scope {
     let fixed_commands = scope.commands.iter()
         .map(|(key, val)| {
-            println!("Duping {:?}", key);
             (key.clone(), match val {
                 // avoid circular refs? cloning a lot, also...
                 &Command::UserHere(ref arg_names, ref list) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), list.clone())),
