@@ -128,7 +128,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                 &Closure(ref c) => {
                     new_expand(c)
                 },
-                _ => {panic!(); }
+                _ => {panic!("ARG {:?}", args); }
             }
         }
         &Command::Immediate(ref x) => {
@@ -172,7 +172,7 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
             // get arguments/name from param 1
             match (&args[0], &args[1], &args[2]) {
                 (&Str(ref name_args),
-                &Closure(ValueClosure(_, ref command_text)),
+                &Closure(ref closure),
                 &Closure(ValueClosure(_, ref to_expand))) => {
                     // TODO: custom arguments, more tests
                     let mut parts = vec![];
@@ -190,9 +190,9 @@ fn eval(scope: Rc<Scope>, command: &Command, args: &[Value]) -> Value {
                     // make_mut clones as nec.
                     let mut new_scope = dup_scope(scope);
                     // circular refs here?
-                    new_scope.commands.insert(parts, Command::UserHere(params,
+                    new_scope.commands.insert(parts, Command::User(params,
                         // TODO: fix scpoe issues
-                        command_text.clone()
+                        closure.clone()
                     ));
                     new_expand(&ValueClosure(Rc::new(new_scope), to_expand.clone()))
                 },
@@ -340,23 +340,28 @@ fn new_parse(&ValueClosure(ref scope, ref values): &ValueClosure)
 }
 
 fn parens_to_arg(tokens: Vec<Token>) -> Value {
-    if tokens.len() > 1 {
-        return Value::Str(
-            tokens.iter().map(|x| { match x {
-                &Token::Text(&Char(ref x)) => x,
-                &Token::OwnedText(Char(ref x)) => x,
-                _ => { panic!("NYI"); }
-            } }).collect::<String>()
-        );
-    } else {
-        match tokens[0] {
-            Token::Text(&Val(ref c)) => { c.clone() },
-            Token::Text(&Char(c)) => { Value::Str(c.to_string()) },
-            Token::OwnedText(Char(c)) => { Value::Str(c.to_string()) },
-            _ => { panic!("Err - NYI {:?}", tokens[0]) }
-        }
-
-    }
+            let test = tokens.iter().map(|x| { match x {
+                &Token::Text(&Char(ref x)) => x.clone(),
+                &Token::OwnedText(Char(ref x)) => x.clone(),
+                _ => {'%'}
+            } }).collect::<String>();
+            if test.contains("%") {
+               let vals = tokens.iter().flat_map(|x| { match x {
+                    &Token::Text(&Val(ref x)) => { Some(x.clone()) },
+                    &Token::OwnedText(Val(ref x)) => { Some(x.clone()) }, 
+                    &Token::Text(&Char(' ')) => {None },
+                    &Token::OwnedText(Char(' ')) => { None },
+                    _ => { panic!("NYI {:?}", tokens) }
+                } }).collect::<Vec<Value>>();
+               if vals.len() == 1 {
+                   vals[0].clone()
+                       // TODO fix this up
+                } else {
+                    Value::List(vals)
+                }
+            } else {
+                Value::Str(test)
+            }
 }
 
 fn raw_to_arg(tokens: &[Atom], scope: Rc<Scope>) -> Value {
@@ -413,13 +418,16 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                             command,
                             &results[..]
                         ))));
+                        break;
                     }
                 }
                 if let Some((end_idx, result)) = out {
                     // may need to re-parse in some cases?
                     let mut new_atoms = parsed[..start_idx].to_vec();
                     new_atoms.push(Token::OwnedText(result));
-                    new_atoms.extend(parsed[end_idx..].to_vec());
+                    new_atoms.extend(parsed[(end_idx+1)..].to_vec());
+                    println!("GOING FROM {:?}", parsed);
+                    println!("GOING TO {:?}", new_atoms);
                     // NOTE: with ;-commands, must *reparse* the whole string,
                     // in case we got interrupted mid-argument TODO
                     parsed = new_atoms;
