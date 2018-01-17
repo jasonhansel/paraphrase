@@ -404,6 +404,7 @@ fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<A
                     let mut current_slice = &parts[pos..];
 
                      // note - quadratic :(
+                    let oldparts = parts.clone();
                     while {
                         !scope.commands.contains_key(&
                             parts.iter().flat_map(|&(ref i, ref x)| { part_for_scan(*i, &values[x.clone()]) }).collect::<Vec<CommandPart>>()
@@ -412,7 +413,7 @@ fn get_chunks<'f>(parsed : &'f Vec<(ScanState, Range<usize>)>, values: &'f Vec<A
                             current_slice = current_slice.split_last().unwrap().1
                         }
                     if current_slice.is_empty() {
-                        panic!("Could not find command... {:?} IN {:?}", parts, scope);
+                        panic!("Could not find command... {:?} IN {:?}", oldparts, scope);
                     }
                     
                     // Hacky hacky hack
