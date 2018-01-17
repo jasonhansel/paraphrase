@@ -437,9 +437,9 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                             scope.clone(),
                             command,
                             &results[..]
-                        ));
+                        );
                         println!("EV {:?}", ev);
-                        out = Some((idx, Val(ev));
+                        out = Some((idx, Val(ev)));
                         break;
                     }
                 }

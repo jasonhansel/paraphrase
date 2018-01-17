@@ -5,7 +5,7 @@ Hello world! == #h #w!
 Hello world = #x
 #define(z :y){#y world};
 Hello world Hello == #z(Hello) #h
+#define(q :y){#h #expand(#rescope(#y){#w} ) #w };
 #define(w){new world order};
 Hello world == #x
-#define(q :y){#h #expand(#rescope(#y){#w} ) #w };
 Hello new world order world == #q{ } x
