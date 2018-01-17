@@ -29,9 +29,10 @@
 
 // TODO: auto expand Exclosures when they reach the scope that they contain (and are returned from
 // a ;-command).
-
+// TODO: test if_eq, handle recursive defs.
 
 // TODO fix bugs in test - is newline behavior desirable?
+// bigger issue: 'new world order' duplicated
 
 // NOTE: expanding from the right  === expanding greedily
 
@@ -272,6 +273,7 @@ fn parse_text(mut values: &[Atom], call_level: u8, scope: Rc<Scope>) -> (Vec<Tok
                     }
                     parts.push(Param);
                     tokens.push(Token::RawParam(&values[1..pos]));
+                    println!("RAWPAR {:?}", &values[1..pos]);
                     values = &values[(pos+1)..];
                     stack.push(ParseEntry::Command(parts));
                 } else {
