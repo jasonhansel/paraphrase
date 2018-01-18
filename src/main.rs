@@ -70,7 +70,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
         &Command::Rescope => {
             match(&args[0], &args[1]) {
                 (&Closure(ValueClosure(ref inner_scope, _)), &Closure(ValueClosure(_, ref contents))) => {
-                     Closure(ValueClosure(inner_scope.clone(), contents.clone()))
+                     Closure(ValueClosure(inner_scope.clone(), contents.clone() ))
                 },
                 _ => {panic!() }
             }
@@ -182,7 +182,7 @@ enum Token<'f> {
     EndParen,
     RawParam(&'f [Atom]),
     Semicolon(&'f [Atom]),
-    Text(&'f Atom),
+    Text(&'f [Atom]),
     OwnedText(Atom)
 }
 
@@ -193,7 +193,7 @@ enum ParseEntry {
     Command(Vec<CommandPart>)
 }
 
-// TODO fix perf - rem compile optimized
+// TODO fix perf - rem compile optimized, stop storing characters separately
 
 fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
     let mut values = &oldv[..];
@@ -208,11 +208,12 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
             if scope.commands.contains_key(&parts) { 
                 // continue to next work item
             } else if parts.len() == 0 {
-
                 let mut ident = "".to_owned();
                 while let Some((next, v)) = values.split_first() {
                     if let Some(chr) = atom_to_char(next) {
-                        if chr.is_alphabetic() || chr == '_' || chr == '#' {
+                        if chr == scope.sigil {
+                            values = v;
+                        } else if chr.is_alphabetic() || chr == '_' || chr == '#' {
                             ident.push(chr);
                             values = v;
                         } else {
@@ -253,7 +254,7 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
                 } else if chr == Some('{') {
                     let mut raw_level = 0;
                     let mut split_values = values.splitn(2, |next| {
-                        raw_level +=  match (atom_to_char(next)) {
+                        raw_level += match atom_to_char(next) {
                             Some('{') => 1,
                             Some('}') => -1,
                             _ => 0
@@ -269,32 +270,39 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
                 }
             }
         },
-        ParseEntry::Text(paren_level, in_call) => {
-            if let Some((next, v)) = values.split_first() {
-                let chr = atom_to_char(next);
-                if chr == Some(scope.sigil) {
-                    values = v;
-                    stack.push(ParseEntry::Text(paren_level, in_call));
-                    stack.push(ParseEntry::Command(vec![]));
-                } else if chr == Some('(') {
-                    values = v;
-                    stack.push(ParseEntry::Text(paren_level + 1, in_call));
-                } else if chr == Some(')') {
-                    if paren_level > 0 {
-                        values = v;
-                        stack.push(ParseEntry::Text(paren_level - 1, in_call));
-                    } else if in_call {
-                    } else {
-                        tokens.push(Token::Text(next));
-                        values = v;
-                        stack.push(ParseEntry::Text(paren_level, in_call));
+        ParseEntry::Text(mut paren_level, in_call) => {
+            let mut pos = 0;
+                while pos < values.len() && atom_to_char(&values[pos]).map(|x| { match x {
+                    '(' => {
+                        paren_level += 1;
+                        true
+                    },
+                    ')' => {
+                        if paren_level > 0 {
+                            paren_level -= 1;
+                            true
+                        } else if in_call {
+                            false
+                        } else {
+                            true
+                        }
                     }
-                } else {
-                    tokens.push(Token::Text(next));
-                    values = v;
-                    stack.push(ParseEntry::Text(paren_level, in_call));
+                    chr => { 
+                        if chr == (scope.sigil) {
+                            stack.push(ParseEntry::Text(paren_level, in_call));
+                            stack.push(ParseEntry::Command(vec![]));
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                } }).unwrap_or(true) {
+                    pos += 1;
                 }
-            }
+                if pos > 0 {
+                    tokens.push(Token::Text(&values[..pos]));
+                    values = &values[pos..];
+                }
         }
     } }
     tokens
@@ -342,27 +350,34 @@ fn retval_to_val(atoms: Vec<Atom>) -> Value {
 }
 
 fn parens_to_arg(tokens: Vec<Token>) -> Value {
-    let test = tokens.iter().map(|x| { match x {
-        &Token::Text(&Char(ref x)) => x.clone(),
-        &Token::OwnedText(Char(ref x)) => x.clone(),
-        _ => {'%'}
-    } }).collect::<String>();
-    if test.contains("%") {
-       let vals = tokens.iter().flat_map(|x| { match x {
-            &Token::Text(&Val(ref x)) => { Some(x.clone()) },
-            &Token::OwnedText(Val(ref x)) => { Some(x.clone()) }, 
-            &Token::Text(&Char(' ')) => {None },
-            &Token::OwnedText(Char(' ')) => { None },
-            _ => { panic!("NYI {:?}", tokens) }
-        } }).collect::<Vec<Value>>();
-       if vals.len() == 1 {
-           vals[0].clone()
-               // TODO fix this up
-        } else {
-            Value::List(vals)
+    let atoms : Vec<Atom> = tokens.into_iter().flat_map(|x| match x {
+        Token::Text(x) => x.to_vec(),
+        Token::OwnedText(x) => vec![ x ],
+        _ => {panic!() }
+    }).collect();
+    let has_non_whitespace = atoms.iter().any(|x| match x {
+        &Char(x) => !x.is_whitespace(),
+        &Val(_) => false
+    });
+    let mut non_strings = atoms.iter().flat_map(|atom| { match atom {
+        &Char(_) => None,
+        &Val(Str(_)) => None,
+        &Val(ref val) => Some(val)
+    } });
+    match (has_non_whitespace, non_strings.next()) {
+        (true, _) | (false, None) => {
+            Str(atoms_to_string(&atoms[..]))
         }
-    } else {
-        Value::Str(test)
+        (false, Some(x)) => {
+            if non_strings.next().is_some() {
+                Value::List(atoms.iter().flat_map(|atom| { match atom {
+                    &Char(_) => None,
+                    &Val(ref val) => Some(val.clone())
+                } }).collect())
+            } else {
+                x.clone()
+            }
+        }
     }
 }
 
@@ -376,6 +391,7 @@ fn new_expand(closure: &ValueClosure) -> Vec<Atom> {
     expand_parsed(parsed, scope.clone())
 }
 
+// TODO decrease recursion
 fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
     loop {
         let mut last = None;
@@ -432,10 +448,10 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                 }
             },
             None => {
-                return parsed.into_iter().map(|x| {
+                return parsed.into_iter().flat_map(|x| {
                     match x {
-                        Token::Text(c) => c.clone(),
-                        Token::OwnedText(c) => c,
+                        Token::Text(c) => c.to_vec(),
+                        Token::OwnedText(c) => vec![c],
                         _ => { panic!("Failure... {:?}", x); }
                     }
                 }).collect::<Vec<Atom>>()
