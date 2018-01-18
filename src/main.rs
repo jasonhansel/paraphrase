@@ -213,7 +213,7 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
                     if let Some(chr) = atom_to_char(next) {
                         if chr == scope.sigil {
                             values = v;
-                        } else if chr.is_alphabetic() || chr == '_' || chr == '#' {
+                        } else if chr.is_alphabetic() || chr == '_' {
                             ident.push(chr);
                             values = v;
                         } else {
