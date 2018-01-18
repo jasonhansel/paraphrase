@@ -228,8 +228,7 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
                     parts.push(Ident(ident));
                     stack.push(ParseEntry::Command(parts));
                 } else {
-                    stack.push(ParseEntry::Command(parts));
-                    panic!("Other Hell {:?} {:?} {:?}", values, ident, stack);
+                    panic!("Could not identify invocation...");
                 }
             } else {
                 let (next, v) = values.split_first().unwrap();
