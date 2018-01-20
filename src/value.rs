@@ -44,9 +44,9 @@ pub enum Atom<T: Borrow<str>> {
  * (Not quite a rope at the moment) */
 #[derive(Clone, Debug)]
 pub enum Rope<'s> {
-    Node(Box<Rope<'s>>, Box<Rope<'s>>),
+    Node(Box<Cow<'s, Rope<'s>>>, Box<Cow<'s, Rope<'s>>>),
     Chars(Cow<'s, str>),
-    Val(Value),
+    Val(Cow<'s, Value>),
     Nothing
 }
 
@@ -62,8 +62,28 @@ pub enum Token<'f> {
 
 pub use Token::*;
 
-impl<'s> Rope<'s> {
+impl Rope<'static> {
+    pub fn shallow_copy<'t, 'r : 't>(&'r self) -> &'r mut Rope<'t> {
+        match self {
+            &Rope::Nothing => { Rope::Nothing },
+            &Rope::Node(_, _) => {
+                if let &Rope::Node(l, r) = (self as &Rope<'t>) {
+                    let nl = (&*l) as &Rope<'t>;
+                    let nr = (&*r) as &Rope<'t>;
+                    Rope::Node(
+                        Box::new(Cow::Borrowed(nl)),
+                        Box::new(Cow::Borrowed(nr))
+                    ) }
+                }
+            &Rope::Chars(ref c) => {
+                Rope::Chars(Cow::Borrowed(&*c))
+            },
+            &Rope::Val(ref v) => { Rope::Val(Cow::Borrowed(&*v)) }
+        }
+    }
+}
 
+impl<'s> Rope<'s> {
     pub fn new() -> Rope<'s> {
         return Rope::Nothing
     }
@@ -71,12 +91,15 @@ impl<'s> Rope<'s> {
     pub fn make_static(&self) -> Rope<'static> {
         match self {
             &Rope::Nothing => { Rope::Nothing },
-            &Rope::Node(ref l, ref r) => { Rope::Node(Box::new(l.make_static()), Box::new(r.make_static())) },
+            &Rope::Node(ref l, ref r) => { Rope::Node(
+                    Box::new(Cow::Owned(l.make_static())),
+                    Box::new(Cow::Owned(r.make_static())))
+            },
             &Rope::Chars(ref c) => {
                 let owned = Cow::Owned((**c).to_owned());
                 Rope::Chars(owned)
             },
-            &Rope::Val(ref v) => { Rope::Val(v.clone()) }
+            &Rope::Val(ref v) => { Rope::Val( Cow::Owned( v.into_owned() ) ) }
         }
     }
 
@@ -86,9 +109,8 @@ impl<'s> Rope<'s> {
         Ok(Rope::Chars(Cow::from(s)))
     }
 
-    pub fn concat<'q, 'r>(self, other: Rope<'r>) -> Rope<'q>
-    where 'r : 'q, 's : 'q{
-        Rope::Node(Box::new(self), Box::new(other))
+    pub fn concat<'q, 'r>(self, other: Rope<'s>) -> Rope<'s> {
+        Rope::Node(Box::new(Cow::Owned(self)), Box::new(Cow::Owned(other)))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -111,14 +133,16 @@ impl<'s> Rope<'s> {
                 v.extend(right.atomize());
                 v
             },
-            &Rope::Val(ref v) => { vec![ Atom::Val(v.clone()) ] },
-            &Rope::Chars(ref c) => { vec![ Atom::Chars(c.clone()) ] }
+            &Rope::Val(ref v) => { vec![
+                Atom::Val(v.into_owned())
+            ] },
+            &Rope::Chars(ref c) => { vec![ Atom::Chars((*c).clone()) ] }
         }
 
     }
-    pub fn split_at<'r : 's, F : FnMut(char) -> bool>
-        (&'r mut self, match_val : bool, mut matcher: F)
-        -> Option<Rope<'s>> {
+    pub fn split_at<'r : 's, 'q, F : FnMut(char) -> bool>
+        (&'s mut self, match_val : bool, mut matcher: F)
+        -> Option<Rope<'s>>  {
         let mut out : Option<Rope<'s>> = None;
         match self {
             &mut Rope::Nothing => { },
@@ -130,13 +154,14 @@ impl<'s> Rope<'s> {
                     None => {
                         match right.split_at(match_val, &mut matcher) {
                             Some(result) => { 
-                                let mut val = Box::new(Rope::Nothing);
-                                swap(&mut val, left);
-                                out = Some(*val);
+                                let val = left;
+                                out = Some(
+                                    **replace(left, Box::new(Cow::Owned(Rope::Nothing)))
+                                );
                             },
                             None => {
-                                replace(left,Box::new(Rope::Nothing));
-                                replace(right, Box::new(Rope::Nothing));
+                                replace(left,Box::new(Cow::Owned(Rope::Nothing)));
+                                replace(right, Box::new(Cow::Owned(Rope::Nothing)));
                             }
                         }
                     }
@@ -151,7 +176,7 @@ impl<'s> Rope<'s> {
             },
             &mut Rope::Chars(ref cow) => {
                 if let Some(idx) = cow.find(matcher) {
-                    let pair = cow.split_at(idx);
+                    let pair = (**cow).split_at(idx);
                     out = Some(Rope::Chars(Cow::from(pair.0)));
                     *self = Rope::Chars(Cow::from(pair.1))
                 } 
@@ -180,9 +205,24 @@ impl<'s> Rope<'s> {
         }
     }
 
-    pub fn split_char<'r : 's>(&'r mut self) -> Option<char> {
-       self.split_at(false, |_| { true })
-           .and_then(|r| { r.get_char() })
+    pub fn split_char(&mut self) -> Option<char> {
+
+        match self {
+            &mut Rope::Nothing => { None },
+            &mut Rope::Node(ref left, ref right) => {
+                left.split_char().or_else(|| { right.split_char() })
+            },
+            &mut Rope::Val(v) => { panic!("Unexpected value!") },
+            &mut Rope::Chars(ch) => {
+                if ch.len() > 0 {
+                    let (first, rest) = ch.split_at(1);
+                    *self = Rope::Chars(Cow::Borrowed(rest));
+                    first.chars().next()
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 

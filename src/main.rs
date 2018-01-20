@@ -60,8 +60,7 @@ impl Eq for Value {}
 fn read_file<'s>(path: &str) -> Result<Rope<'s>, Error> {
     println!("Reading...");
     std::io::stdout().flush().unwrap();
-    let mut x = String::new();
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
     Rope::read_file(&mut file)
 }
 
@@ -71,7 +70,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
         &Command::Rescope => {
             match(&args[0], &args[1]) {
                 (&Closure(ValueClosure(ref inner_scope, _)), &Closure(ValueClosure(_, ref contents))) => {
-                     Closure(ValueClosure(inner_scope.clone(), Box::new(**contents) ))
+                     Closure(ValueClosure(inner_scope.clone(), contents.clone() ))
                 },
                 _ => {panic!() }
             }
@@ -79,7 +78,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
         &Command::Expand => {
             match &args[0] {
                 &Closure(ValueClosure(ref scope, ref contents)) => {
-                    retval_to_val(new_expand(scope.clone(), **contents))
+                    retval_to_val(new_expand(scope.clone(), &mut contents.shallow_copy() ))
                 },
                 _ => {panic!("ARG {:?}", args[0]); }
             }
@@ -100,7 +99,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                 // or a Tagged). coerce sometimes?
                 new_scope.commands.insert(vec![Ident(name.to_owned() )], Command::Immediate( *arg ) );
             }
-            retval_to_val(new_expand(Rc::new(new_scope), **contents))
+            retval_to_val(new_expand(Rc::new(new_scope), &mut contents.shallow_copy() ))
         },
         &Command::UserHere(ref arg_names, ref contents) => { 
             let inner_scope = scope;
@@ -114,7 +113,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                 // or a Tagged). coerce sometimes?
                 new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate( *arg ) );
             }
-            retval_to_val(new_expand(Rc::new(new_scope), contents.clone()))
+            retval_to_val(new_expand(Rc::new(new_scope), &mut contents.shallow_copy() ))
  
             // todo handle args
             // let closure = ValueClosure(scope.clone(), cmd_data.clone());
@@ -149,7 +148,7 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                         closure.clone()
                     ));
                     // TODO avoid clone here
-                    retval_to_val(new_expand(Rc::new(new_scope), **to_expand ))
+                    retval_to_val(new_expand(Rc::new(new_scope), &mut to_expand.shallow_copy() ))
                 },
                 _ => {
                     panic!("Invalid state")
@@ -186,8 +185,8 @@ enum ParseEntry {
 // TODO fix perf - rem compile optimized, stop storing characters separately
 // TODO note: can't parse closures in advance because of Rescope
 
-fn new_parse<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> Vec<Token<'s>> {
-    let mut tokens = vec![];
+fn new_parse<'r, 's : 'r>(scope: Rc<Scope>, rope: &'s mut Rope<'s>) -> Vec<Token<'s>> {
+    let mut tokens : Vec<Token<'s>> = vec![];
     let mut stack : Vec<ParseEntry> = vec![
         ParseEntry::Text(0, false)
     ];
@@ -198,7 +197,7 @@ fn new_parse<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> Vec<Token<'s>> {
             if scope.commands.contains_key(&parts) { 
                 // continue to next work item
             } else if parts.len() == 0 {
-                let ident = rope.split_at(false,  &mut |chr : char| {
+                let ident : Rope<'s> = rope.split_at(false,  &mut |chr : char| {
                     if chr.is_alphabetic() || chr == '_' || chr == scope.sigil {
                         // dumb check for sigil here
                         false
@@ -233,7 +232,7 @@ fn new_parse<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> Vec<Token<'s>> {
                     stack.push(ParseEntry::Command(parts));
                 } else if chr == ';' {
                     parts.push(Param);
-                    tokens.push(Token::Semicolon( rope ));
+                    tokens.push(Token::Semicolon( rope.clone() ));
                     return tokens;
                 } else if chr == '{' {
                     let mut raw_level = 0;
@@ -378,7 +377,7 @@ fn raw_to_arg<'f>(tokens: &Rope<'f>, scope: Rc<Scope>) -> Value {
     return Value::Closure(ValueClosure(scope, Box::new(tokens.make_static())))
 }
 
-fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Rope<'f> {
+fn new_expand<'f>(scope: Rc<Scope>, tokens: &'f mut Rope<'f>) -> Rope<'f> {
     let parsed = new_parse(scope.clone(), tokens);
     expand_parsed(parsed, scope.clone())
 }
@@ -430,7 +429,7 @@ fn expand_parsed<'f>(mut parsed: Vec<Token<'f>>, scope: Rc<Scope>) -> Rope<'f> {
                 if let Some((end_idx, result)) = out {
                     // may need to re-parse in some cases? slow
                     parsed.drain(start_idx..(end_idx+1));
-                    let r = Token::Text(Rope::Val(result));
+                    let r = Token::Text(Rope::Val(Cow::Owned(result)));
                     parsed.insert(start_idx, r);
 
                    // NOTE: with ;-commands, must *reparse* the whole string,
@@ -500,7 +499,7 @@ impl<T : Borrow<str>> Atom<T> {
 fn it_works() {
    
     let chars = read_file("tests/1-simple.pp").unwrap();
-    let results = new_expand(Rc::new(default_scope()), chars);
+    let results = new_expand(Rc::new(default_scope()), &mut chars);
     let out = results.atomize().iter().map(|x| { x.serialize() }).collect::<String>();
     println!("||\n{}||", out);
     // ISSUE: extra whitespace at end of output
