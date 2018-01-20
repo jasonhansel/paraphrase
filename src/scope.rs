@@ -1,6 +1,7 @@
 
 use value::*;
 
+use std::borrow::Cow;
 use std::rc::Rc;
 use std::collections::HashMap;
 
@@ -10,7 +11,7 @@ pub enum Command {
     IfEq,
     User(Vec<String>, ValueClosure), // arg names
     UserHere(Vec<String>, Rope<'static>), // TODO: clone UserHere's into User's
-    Immediate(Value),
+    Immediate(Cow<'static, Value>),
     Expand,
     Rescope
 }
@@ -23,22 +24,31 @@ pub enum CommandPart {
 }
 pub use CommandPart::*;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Scope {
     pub sigil: char,
     pub commands: HashMap<Vec<CommandPart>, Command>
 }
 
-pub fn dup_scope(scope : Rc<Scope>) -> Scope {
-    let fixed_commands = scope.commands.iter()
-        .map(|(key, val)| {
-            (key.clone(), match val {
-                // avoid circular refs? cloning a lot, also...
-                &Command::UserHere(ref arg_names, ref list) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), Box::new(*list) )),
-                x => x.clone()
-            })
-        })
-        .collect::<HashMap<Vec<CommandPart>,Command>>();
-    Scope { sigil: scope.sigil.clone(), commands: fixed_commands }
+
+pub fn dup_scope(scope : Rc<Scope>) -> Rc<Scope> {
+    // does this make any sense?
+    let mut stat = (*scope).clone();
+    for (_, val) in stat.commands.iter_mut() {
+        let mut cmd = None;
+        match val {
+            &mut Command::UserHere(ref mut arg_names, ref mut list) => {
+                cmd = Some(Command::User(
+                    arg_names.clone(),
+                    ValueClosure(scope.clone(), Box::new(list.clone()))
+                ))
+            },
+            _ => {}
+        };
+        if let Some(c) = cmd {
+            *val = c;
+        }
+    }
+    Rc::new(stat)
 }
 
