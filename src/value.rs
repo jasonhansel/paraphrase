@@ -16,12 +16,11 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
-#[derive(Clone)]
 pub struct ValueClosure(pub Rc<Scope>, pub Box<Rope<'static>>);
 
 // A Value is something that can be used as a parameter to a macro,
 // or as a return value.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Value {
     Str(String),
     List(Vec<Value>),
@@ -31,7 +30,7 @@ pub enum Value {
 }
 
 // An Atom represents an "atomic" piece of text that is to be expanded.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Atom<'s> {
     Chars(Cow<'s, str>),
     Val(Cow<'s, Value>) // TODO avoid copies
@@ -42,7 +41,7 @@ pub enum Atom<'s> {
 /* UNBALANCED, BORROWED rope data structure
  * Slightly inspired by: https://github.com/mthadley/rupe/blob/master/src/lib.rs
  * (Not quite a rope at the moment) */
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Rope<'s> {
     Node(Box<Rope<'s>>, Box<Rope<'s>>),
     Chars(Cow<'s, str>),
