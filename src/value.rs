@@ -64,21 +64,19 @@ pub use Token::*;
 
 impl Rope<'static> {
     pub fn shallow_copy<'t, 'r : 't>(&'r self) -> &'r mut Rope<'t> {
+        // SLOOOOW may need to use refcells or something?
         match self {
-            &Rope::Nothing => { Rope::Nothing },
-            &Rope::Node(_, _) => {
-                if let &Rope::Node(l, r) = (self as &Rope<'t>) {
-                    let nl = (&*l) as &Rope<'t>;
-                    let nr = (&*r) as &Rope<'t>;
-                    Rope::Node(
-                        Box::new(Cow::Borrowed(nl)),
-                        Box::new(Cow::Borrowed(nr))
-                    ) }
-                }
-            &Rope::Chars(ref c) => {
-                Rope::Chars(Cow::Borrowed(&*c))
+            &Rope::Nothing => { &mut Rope::Nothing },
+            &Rope::Node(ref l, ref r) => {
+                &mut Rope::Node(
+                    l.shallow_copy(),
+                    r.shallow_copy()
+                )
             },
-            &Rope::Val(ref v) => { Rope::Val(Cow::Borrowed(&*v)) }
+            &Rope::Chars(ref c) => {
+                &mut Rope::Chars(Cow::Borrowed(&*c))
+            },
+            &Rope::Val(ref v) => { &mut Rope::Val(Cow::Borrowed(&*v)) }
         }
     }
 }

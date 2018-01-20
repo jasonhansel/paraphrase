@@ -361,6 +361,7 @@ fn rope_to_val<'s>(rope: Rope<'s>, lists_allowed: bool) -> Value {
     }
 }
 
+// TODO: can i use 'tagged' rope segments instead of token lists?
 fn parens_to_arg<'f>(tokens: Vec<Token<'f>>) -> Value {
     let mut rope = Rope::new();
     for token in tokens { match token {
