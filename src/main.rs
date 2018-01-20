@@ -40,7 +40,8 @@ mod value;
 mod scope;
 
 use scope::*;
-
+use std::borrow::Cow;
+use std::borrow::Borrow;
 use std::ops::Range;
 use std::collections::HashMap;
 use std::fs::File;
@@ -56,12 +57,12 @@ impl Eq for Value {}
 
 // nb also write stdlib.
 
-fn read_file(path: &str) -> Result<Vec<Atom>, Error> {
+fn read_file<'s>(path: &str) -> Result<Rope<'s>, Error> {
     println!("Reading...");
     std::io::stdout().flush().unwrap();
     let mut x = String::new();
-    File::open(path)?.read_to_string(&mut x)?;
-    Ok(x.chars().map(|x| Char(x)).collect::<Vec<Atom>>())
+    let file = File::open(path)?;
+    Rope::read_file(&mut file)
 }
 
 
@@ -70,16 +71,15 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
         &Command::Rescope => {
             match(&args[0], &args[1]) {
                 (&Closure(ValueClosure(ref inner_scope, _)), &Closure(ValueClosure(_, ref contents))) => {
-                     Closure(ValueClosure(inner_scope.clone(), contents.clone() ))
+                     Closure(ValueClosure(inner_scope.clone(), Box::new(**contents) ))
                 },
                 _ => {panic!() }
             }
         },
         &Command::Expand => {
             match &args[0] {
-                &Closure(ref c) => {
-                    let rv = retval_to_val(new_expand(c));
-                    rv
+                &Closure(ValueClosure(ref scope, ref contents)) => {
+                    retval_to_val(new_expand(scope.clone(), **contents))
                 },
                 _ => {panic!("ARG {:?}", args[0]); }
             }
@@ -94,13 +94,13 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
             if arg_names.len() != args.len() {
                 panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
             }
-            for (name, arg) in arg_names.iter().zip( args.iter() ) {
+            for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
                 // should it always take no arguments?
                 // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                 // or a Tagged). coerce sometimes?
-                new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
+                new_scope.commands.insert(vec![Ident(name.to_owned() )], Command::Immediate( *arg ) );
             }
-            retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), contents.clone())))
+            retval_to_val(new_expand(Rc::new(new_scope), **contents))
         },
         &Command::UserHere(ref arg_names, ref contents) => { 
             let inner_scope = scope;
@@ -112,9 +112,9 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                 // should it always take no arguments?
                 // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                 // or a Tagged). coerce sometimes?
-                new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate(arg.clone()) );
+                new_scope.commands.insert(vec![Ident(name.to_owned())], Command::Immediate( *arg ) );
             }
-            retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), contents.clone())))
+            retval_to_val(new_expand(Rc::new(new_scope), contents.clone()))
  
             // todo handle args
             // let closure = ValueClosure(scope.clone(), cmd_data.clone());
@@ -148,7 +148,8 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
                         // TODO: fix scpoe issues
                         closure.clone()
                     ));
-                    retval_to_val(new_expand(&ValueClosure(Rc::new(new_scope), to_expand.clone())))
+                    // TODO avoid clone here
+                    retval_to_val(new_expand(Rc::new(new_scope), **to_expand ))
                 },
                 _ => {
                     panic!("Invalid state")
@@ -168,23 +169,10 @@ fn eval<'c, 'v>(scope: Rc<Scope>, command: &'c Command, args: &'v [Value]) -> Va
 }
 
 
-fn atom_to_char(atom: &Atom) -> Option<char> {
-    match atom {
-        &Char(c) => Some(c),
-        _ => None
-    }
-}
 
-#[derive(Clone, Debug)]
-enum Token<'f> {
-    Ident(String),
-    StartParen,
-    EndParen,
-    RawParam(&'f [Atom]),
-    Semicolon(&'f [Atom]),
-    Text(&'f [Atom]),
-    OwnedText(Atom)
-}
+
+
+
 
 
 #[derive(Debug)]
@@ -193,10 +181,12 @@ enum ParseEntry {
     Command(Vec<CommandPart>)
 }
 
-// TODO fix perf - rem compile optimized, stop storing characters separately
 
-fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
-    let mut values = &oldv[..];
+
+// TODO fix perf - rem compile optimized, stop storing characters separately
+// TODO note: can't parse closures in advance because of Rescope
+
+fn new_parse<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> Vec<Token<'s>> {
     let mut tokens = vec![];
     let mut stack : Vec<ParseEntry> = vec![
         ParseEntry::Text(0, false)
@@ -208,61 +198,59 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
             if scope.commands.contains_key(&parts) { 
                 // continue to next work item
             } else if parts.len() == 0 {
-                let mut ident = "".to_owned();
-                while let Some((next, v)) = values.split_first() {
-                    if let Some(chr) = atom_to_char(next) {
-                        if chr == scope.sigil {
-                            values = v;
-                        } else if chr.is_alphabetic() || chr == '_' {
-                            ident.push(chr);
-                            values = v;
-                        } else {
-                            break;
-                        }
+                let ident = rope.split_at(false,  &mut |chr : char| {
+                    if chr.is_alphabetic() || chr == '_' || chr == scope.sigil {
+                        // dumb check for sigil here
+                        false
                     } else {
-                        break;
+                        true
                     }
-                }
-                if !ident.is_empty() {
-                    tokens.push(Token::Ident(ident.clone()));
-                    parts.push(Ident(ident));
+                }).unwrap();
+
+     //           if !ident.is_empty() {
+                    parts.push(Ident( ident.get_str().into_owned() ));
+                    tokens.push(Token::CommandName( ident ));
                     stack.push(ParseEntry::Command(parts));
-                } else {
-                    panic!("Could not identify invocation...");
-                }
+       //         } else {
+         //           panic!("Could not identify invocation...");
+           //     }
             } else {
-                let (next, v) = values.split_first().unwrap();
-                let chr = atom_to_char(next);
-                if chr.map(|x| x.is_whitespace()) == Some(true) {
-                    values = v;
-                    stack.push(ParseEntry::Command(parts));
-                } else if chr == Some('(') {
+                let search_result = rope.split_at(false, |ch : char| {
+                    if ch.is_whitespace() {
+                        return false;
+                    } else {
+                        return true;
+                    }
+                }).unwrap();
+                let chr = rope.split_char().unwrap();
+                if chr == '(' {
                     tokens.push(Token::StartParen);
-                    values = v;
                     stack.push(ParseEntry::Command(parts));
                     stack.push(ParseEntry::Text(0, true));
-                } else if chr == Some(')') {
-                    values = v;
+                } else if chr == ')' {
                     tokens.push(Token::EndParen);
                     parts.push(Param);
                     stack.push(ParseEntry::Command(parts));
-                } else if chr == Some(';') {
+                } else if chr == ';' {
                     parts.push(Param);
-                    tokens.push(Token::Semicolon(v));
-                    stack.clear();
-                } else if chr == Some('{') {
+                    tokens.push(Token::Semicolon( rope ));
+                    return tokens;
+                } else if chr == '{' {
                     let mut raw_level = 0;
-                    let mut split_values = values.splitn(2, |next| {
-                        raw_level += match atom_to_char(next) {
-                            Some('{') => 1,
-                            Some('}') => -1,
+                    
+                    let param = rope.split_at(true, |ch| { 
+                        raw_level += match ch {
+                            '{' => 1,
+                            '}' => -1,
                             _ => 0
                         };
                         raw_level == 0
-                    });
+                    }).unwrap();
+                    rope.split_char();
                     parts.push(Param);
-                    tokens.push(Token::RawParam( &(split_values.next().unwrap())[1..] ));
-                    values = split_values.next().unwrap();
+                    tokens.push(Token::RawParam(
+                        param
+                    ));
                     stack.push(ParseEntry::Command(parts));
                 } else {
                     panic!("Failed {:?} {:?}", parts, scope);
@@ -271,37 +259,45 @@ fn new_parse(&ValueClosure(ref scope, ref oldv): &ValueClosure) -> Vec<Token> {
         },
         ParseEntry::Text(mut paren_level, in_call) => {
             let mut pos = 0;
-                while pos < values.len() && atom_to_char(&values[pos]).map(|x| { match x {
+            let prefix = rope.split_at(true, &mut |x| { match x{
                     '(' => {
                         paren_level += 1;
-                        true
+                        false
                     },
                     ')' => {
                         if paren_level > 0 {
                             paren_level -= 1;
-                            true
-                        } else if in_call {
                             false
-                        } else {
+                        } else if in_call {
                             true
+                        } else {
+                            false
                         }
                     }
                     chr => { 
                         if chr == (scope.sigil) {
-                            stack.push(ParseEntry::Text(paren_level, in_call));
-                            stack.push(ParseEntry::Command(vec![]));
-                            false
+                                                true
                         } else {
-                            true
+                            false
                         }
                     }
-                } }).unwrap_or(true) {
-                    pos += 1;
+                } });
+            if let Some(p) = prefix {
+                if !p.is_empty() {
+                    tokens.push(Token::Text(p));
                 }
-                if pos > 0 {
-                    tokens.push(Token::Text(&values[..pos]));
-                    values = &values[pos..];
+            }
+            match rope.get_char() {
+                Some(')') => {
+                },
+                Some(x) => {
+                    if x != scope.sigil { panic!() }
+                    stack.push(ParseEntry::Text(paren_level, in_call));
+                    stack.push(ParseEntry::Command(vec![]));
+                },
+                None => {
                 }
+            }
         }
     } }
     tokens
@@ -317,85 +313,82 @@ impl Value {
     }
 }
 
-fn atoms_to_string<'f>(atoms: &'f [Atom]) -> String {
-    atoms.into_iter().fold("".to_owned(), |mut s, atom| { match atom {
-        &Char(x) => { s.push(x) }
+fn atoms_to_string<'f, T: Borrow<str>, U: Borrow<Atom<T>>>(atoms: &'f [U]) -> String {
+    atoms.into_iter().fold("".to_owned(), |mut s, atom| { match atom.borrow() {
+        &Chars(ref x) => { s.push_str(x.borrow()) }
         &Val(ref x) => { s.push_str(&x.to_string()[..]) }
     }; s })
 }
 
-fn retval_to_val(atoms: Vec<Atom>) -> Value {
-    let has_non_whitespace = atoms.iter().any(|x| match x {
-        &Char(x) => !x.is_whitespace(),
+fn atoms_to_string_inner<'f, T: Borrow<str> + 'f, U: Borrow<&'f Atom<T>>>(atoms: &'f [U]) -> String {
+    atoms.into_iter().fold("".to_owned(), |mut s, atom| { match atom.borrow() {
+        &&Chars(ref x) => { s.push_str(x.borrow()) }
+        &&Val(ref x) => { s.push_str(&x.to_string()[..]) }
+    }; s })
+}
+
+
+
+fn retval_to_val<'s>(rope: Rope<'s>) -> Value {
+    return rope_to_val(rope, false);
+}
+fn rope_to_val<'s>(rope: Rope<'s>, lists_allowed: bool) -> Value {
+    let atoms = rope.atomize();
+    let has_non_whitespace = atoms.iter().any(|x : &Atom<Cow<str>>| match x.borrow() {
+        &Chars(ref x) => (x.trim_left().len() > 0),
         &Val(_) => false
     });
-    let mut non_strings = atoms.iter().flat_map(|atom| { match atom {
-        &Char(_) => None,
-        &Val(Str(_)) => None,
-        &Val(ref val) => Some(val)
-    } });
-    match (has_non_whitespace, non_strings.next()) {
-        (true, _) | (false, None) => {
-            Str(atoms_to_string(&atoms[..]))
+    let val_cnt : u32 = atoms.iter().map(|atom| { match atom {
+        &Chars(_) => 0,
+        &Val(_) => 1
+    } }).sum();
+    if has_non_whitespace || val_cnt == 0 {
+        Str(atoms_to_string(&atoms[..]))
+    } else if val_cnt > 1 {
+        if lists_allowed {
+            Value::List(atoms.into_iter().flat_map(|atom| { match atom {
+                Chars(_) => None,
+                Val(val) => Some(val)
+            } }).collect())
+        } else {
+            panic!("Cannot create implicit lists in macro return values");
         }
-        (false, Some(x)) => {
-            if non_strings.next().is_some() {
-                panic!("Cannot create implicit lists in macro return values. Got: {:?}", atoms);
-            } else {
-                x.clone()
-            }
-        }
+    } else {
+        for a in atoms { match a {
+            Val(val) => { return val },
+            _ => {}
+        } }
+        panic!()
     }
 }
 
-fn parens_to_arg(tokens: Vec<Token>) -> Value {
-    let atoms : Vec<Atom> = tokens.into_iter().flat_map(|x| match x {
-        Token::Text(x) => x.to_vec(),
-        Token::OwnedText(x) => vec![ x ],
-        _ => {panic!() }
-    }).collect();
-    let has_non_whitespace = atoms.iter().any(|x| match x {
-        &Char(x) => !x.is_whitespace(),
-        &Val(_) => false
-    });
-    let mut non_strings = atoms.iter().flat_map(|atom| { match atom {
-        &Char(_) => None,
-        &Val(Str(_)) => None,
-        &Val(ref val) => Some(val)
-    } });
-    match (has_non_whitespace, non_strings.next()) {
-        (true, _) | (false, None) => {
-            Str(atoms_to_string(&atoms[..]))
-        }
-        (false, Some(x)) => {
-            if non_strings.next().is_some() {
-                Value::List(atoms.iter().flat_map(|atom| { match atom {
-                    &Char(_) => None,
-                    &Val(ref val) => Some(val.clone())
-                } }).collect())
-            } else {
-                x.clone()
-            }
-        }
-    }
+fn parens_to_arg<'f>(tokens: Vec<Token<'f>>) -> Value {
+    let mut rope = Rope::new();
+    for token in tokens { match token {
+        Token::Text(x) => {
+            rope = rope.concat(x)
+        },
+        _ => { panic!("Err") }
+    } };
+    rope_to_val(rope, true)
 }
 
-fn raw_to_arg(tokens: &[Atom], scope: Rc<Scope>) -> Value {
-    return Value::Closure(ValueClosure(scope, tokens.to_vec()))
+fn raw_to_arg<'f>(tokens: &Rope<'f>, scope: Rc<Scope>) -> Value {
+    // Cloning is OK here
+    return Value::Closure(ValueClosure(scope, Box::new(tokens.make_static())))
 }
 
-fn new_expand(closure: &ValueClosure) -> Vec<Atom> {
-    let parsed = new_parse(closure);
-    let &ValueClosure(ref scope, _) = closure;
+fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Rope<'f> {
+    let parsed = new_parse(scope.clone(), tokens);
     expand_parsed(parsed, scope.clone())
 }
 
-// TODO decrease recursion
-fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
+// TODO decrease recursion, do more things purely in terms of ropes
+fn expand_parsed<'f>(mut parsed: Vec<Token<'f>>, scope: Rc<Scope>) -> Rope<'f> {
     loop {
         let mut last = None;
         for idx in 0..(parsed.len()) {
-            if let Token::Ident(_) = parsed[idx] {
+            if let Token::CommandName(_) = parsed[idx] {
                 last = Some(idx);
             }
         }
@@ -408,21 +401,21 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                 for idx in start_idx..parsed.len() {
                     // NB cannot contain any other commands - hence no nested parens
                     match (&parsed[idx], in_parens.is_some()) {
-                        (&Token::Ident(ref id), false) => { parts.push(Ident( id.clone() )) },
+                        (&Token::CommandName(ref id), false) => { parts.push(Ident( id.get_str().into_owned() )) },
                         (&Token::StartParen, false) => { in_parens = Some(vec![]); },
                         (&Token::EndParen, true) => {
-                            results.push(parens_to_arg(in_parens.clone().unwrap()));
+                            results.push(parens_to_arg( in_parens.unwrap()  ));
                             in_parens = None;
                             parts.push(Param);
                         },
-                        (x, true) => {
-                            in_parens.as_mut().unwrap().push(x.clone());
+                        (&x, true) => {
+                            in_parens.as_mut().unwrap().push(x);
                         },
-                        (&Token::RawParam(c), false) => {
+                        (&Token::RawParam(ref c), false) => {
                             results.push(raw_to_arg(c, scope.clone() ));
                             parts.push(Param); },
-                        (&Token::Semicolon(c), false) => { results.push(raw_to_arg(c, scope.clone() )); parts.push(Param); },
-                        (_, _) => { panic!("Could not handle {:?} {:?} in {:?}", parsed[idx], in_parens.clone(), parsed); }
+                        (&Token::Semicolon(ref c), false) => { results.push(raw_to_arg(c, scope.clone() )); parts.push(Param); },
+                        (_, _) => { panic!("Could not handle {:?} {:?} in {:?}", parsed[idx], in_parens, parsed); }
                     }
                     if let Some(command) = scope.commands.get(&parts) {
                         let ev = eval(
@@ -430,30 +423,33 @@ fn expand_parsed(mut parsed: Vec<Token>, scope: Rc<Scope>) -> Vec<Atom> {
                             command,
                             &results[..]
                         );
-                        out = Some((idx, Val(ev)));
+                        out = Some((idx, ev));
                         break;
                     }
                 }
                 if let Some((end_idx, result)) = out {
-                    // may need to re-parse in some cases?
-                    let mut new_atoms = parsed[..start_idx].to_vec();
-                    new_atoms.push(Token::OwnedText(result));
-                    new_atoms.extend(parsed[(end_idx+1)..].to_vec());
-                    // NOTE: with ;-commands, must *reparse* the whole string,
+                    // may need to re-parse in some cases? slow
+                    parsed.drain(start_idx..(end_idx+1));
+                    let r = Token::Text(Rope::Val(result));
+                    parsed.insert(start_idx, r);
+
+                   // NOTE: with ;-commands, must *reparse* the whole string,
                     // in case we got interrupted mid-argument TODO
-                    parsed = new_atoms;
                } else {
                     panic!("Failure? {:?} {:?} {:?}", parts, results, parsed);
                 }
             },
             None => {
-                return parsed.into_iter().flat_map(|x| {
-                    match x {
-                        Token::Text(c) => c.to_vec(),
-                        Token::OwnedText(c) => vec![c],
-                        _ => { panic!("Failure... {:?}", x); }
+                let mut result = Rope::new();
+                for part in parsed {
+                    match part {
+                        Token::Text(x) => {
+                            result = result.concat(x)
+                        },
+                        _ => { panic!() }
                     }
-                }).collect::<Vec<Atom>>()
+                }
+                return result
             }
         }
     }
@@ -481,15 +477,20 @@ fn default_scope() -> Scope {
     ); 
     scope
 }
-impl Atom {
+impl Value {
+    fn serialize(&self) -> String {
+        match self {
+            &Str(ref x) => x.clone(),
+            &Tagged(_, ref x) => x.serialize(),
+            _ => {panic!("Cannot serialize") }
+        }
+    }
+}
+impl<T : Borrow<str>> Atom<T> {
     fn serialize(&self) -> String {
         (match self {
-            &Char(x) => x.to_string(),
-            &Val(Str(ref x)) => x.clone(),
-            &Val(Tagged(_, ref x)) => {
-                Val(*(x.clone())).serialize()
-            },
-            &Val(ref x) => { panic!("Cannot serialize closure: {:?}", x); }
+            &Chars(ref x) => x.borrow().to_string(),
+            &Val(ref x) => x.serialize()
         })
     }
 }
@@ -499,8 +500,8 @@ impl Atom {
 fn it_works() {
    
     let chars = read_file("tests/1-simple.pp").unwrap();
-    let results = new_expand(&ValueClosure(Rc::new(default_scope()), chars));
-    let out = results.iter().map(|x| { x.serialize() }).collect::<String>();
+    let results = new_expand(Rc::new(default_scope()), chars);
+    let out = results.atomize().iter().map(|x| { x.serialize() }).collect::<String>();
     println!("||\n{}||", out);
     // ISSUE: extra whitespace at end of output
  //   assert_eq!(out, "Hello world!\n");

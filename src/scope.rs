@@ -9,7 +9,7 @@ pub enum Command {
     Define, // add otheres, eg. expand
     IfEq,
     User(Vec<String>, ValueClosure), // arg names
-    UserHere(Vec<String>, Vec<Atom>), // TODO: clone UserHere's into User's
+    UserHere(Vec<String>, Rope<'static>), // TODO: clone UserHere's into User's
     Immediate(Value),
     Expand,
     Rescope
@@ -34,7 +34,7 @@ pub fn dup_scope(scope : Rc<Scope>) -> Scope {
         .map(|(key, val)| {
             (key.clone(), match val {
                 // avoid circular refs? cloning a lot, also...
-                &Command::UserHere(ref arg_names, ref list) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), list.clone())),
+                &Command::UserHere(ref arg_names, ref list) => Command::User(arg_names.clone(), ValueClosure(scope.clone(), Box::new(*list) )),
                 x => x.clone()
             })
         })
