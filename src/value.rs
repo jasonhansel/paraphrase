@@ -123,6 +123,7 @@ impl<'s> Leaf<'s> {
             &Leaf::Own(ref v) => { v }
         }
     }
+
     pub fn make_static(&self) -> Leaf<'static> { match self {
         // TODO avoid this at all costs
         &Chr(ref c) => {
