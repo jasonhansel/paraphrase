@@ -122,7 +122,9 @@ fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Command
                     Command::Immediate( arg.to_val().make_static() )
                 );
             }
-            retval_to_val(new_expand(&new_scope, contents.dupe() ))
+            let out = new_expand(&new_scope, contents.dupe() ).make_static();
+            println!("OUTP {:?} {:?}", out, contents);
+            out
         },
        &Command::Define => {
             // get arguments/name from param 1
@@ -201,6 +203,7 @@ pub trait TokenVisitor<'s, 't : 's> {
     fn done(&mut self);
 }
 
+#[derive(Debug)]
 enum Instr<'s> {
     Push(Rope<'s>),
     Concat(u16),
@@ -227,19 +230,23 @@ impl<'s> Expander<'s> {
     }
     fn do_expand(self, scope: &'s Rc<Scope>) -> Leaf<'s> {
         let mut stack : Vec<Rope<'s>> = vec![];
+        println!("RUNNING {:?}", self.instr);
         for i in self.instr.into_iter() { match i {
             Instr::Push(r) => { stack.push(r); },
             Instr::Concat(cnt) => {
                 let mut new_rope = Rope::new();
                 let idx = stack.len() - cnt as usize;
                 for item in stack.split_off(idx) {
+                    println!("CONCATTING {:?}", item);
                     new_rope = new_rope.concat(item.make_static());
                 }
+                println!("POSTCONC {:?}", new_rope);
                 stack.push(
                     new_rope
                 );
             },
             Instr::Close(r) => {
+                println!("CLOSING {:?}", r);
                 let stat = r.make_static();
                 stack.push(
                     Rope::Leaf( Leaf::Own(
@@ -263,7 +270,9 @@ impl<'s> Expander<'s> {
         if stack.len() != 1 {
             panic!("Wrong stack size!");
         }
-        stack.remove(0).to_leaf(false)
+        let rv = stack.remove(0).to_leaf(false);
+        println!("SRESULT {:?}", rv);
+        rv
     }
 
 }
@@ -303,6 +312,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     }
     fn done(&mut self) {
         self.instr.push(Instr::Concat(self.parens.pop().unwrap()));
+        println!("COMPILED {:?}", self.instr);
         if self.calls.len() > 0 || self.parens.len() > 0 {
             panic!("Unbalanced {:?} {:?}", self.calls, self.parens);
         }
@@ -396,6 +406,7 @@ fn parse<'f, 'r, 's : 'r>(
                         };
                         raw_level == 0
                     }).unwrap();
+                    println!("FRAW {:?}", param);
                     rope.split_char();
                     println!("REST {:?}", rope);
                     parts.push(Param);

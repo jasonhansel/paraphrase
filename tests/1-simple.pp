@@ -8,4 +8,4 @@ Hello world Hello == #z(Hello) #h
 #define(q :y){#h #expand(#rescope(#y){#w} ) #w };
 #define(w){new world order};
 Hello world == #x
-Hello new world order world == #q{ } x
+Hello new world order world x == #q{ } x

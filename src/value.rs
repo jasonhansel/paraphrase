@@ -242,10 +242,12 @@ impl<'s> Rope<'s> {
         let mut has = true;
         let mut string : Cow<'s, str> = Cow::from("");
         self.walk(|v|{
-            match v.to_str().unwrap() {
+            println!("TRYCONC {:?}", v.to_str());
+            match v.to_str() {
                 // TODO avoid copies
-                &Cow::Borrowed(ref x) => { string += x.clone(); },
-                &Cow::Owned(ref x) => { string += &x.clone()[..] },
+                Some(&Cow::Borrowed(ref x)) => { string += x.clone(); },
+                // for some reason, adding the string below doesn't work
+                Some(&Cow::Owned(ref x)) => { string.to_mut().push_str(&x[..]) },
                 _ => { has = false }
             }
         });
@@ -261,6 +263,7 @@ impl<'s> Rope<'s> {
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
                 if !self.is_white() {
+                    println!("BUILTA {:?}", self.to_str());
                     Leaf::Own(Box::new(Value::Str( self.to_str().unwrap() )))
                 } else {
                     match self.values_cnt() {
@@ -269,6 +272,7 @@ impl<'s> Rope<'s> {
                         },
                         _ => {
                             if let Some(s) = self.to_str() {
+                                println!("BUILT {:?}", s);
                                 Leaf::Own(Box::new(Value::Str( s )))
                             } else {
                                  panic!("Cannot make sense!");
