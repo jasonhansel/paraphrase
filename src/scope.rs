@@ -5,13 +5,13 @@ use std::borrow::Cow;
 use std::rc::Rc;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Command {
     Define, // add otheres, eg. expand
     IfEq,
+    InOther(Rc<Scope>),
     User(Vec<String>, ValueClosure), // arg names
-    UserHere(Vec<String>, Rope<'static>), // TODO: clone UserHere's into User's
-    Immediate(Cow<'static, Value>),
+    Immediate(Value<'static>),
     Expand,
     Rescope
 }
@@ -24,7 +24,7 @@ pub enum CommandPart {
 }
 pub use CommandPart::*;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Scope {
     pub sigil: char,
     pub commands: HashMap<Vec<CommandPart>, Command>
@@ -33,21 +33,10 @@ pub struct Scope {
 
 pub fn dup_scope(scope : Rc<Scope>) -> Rc<Scope> {
     // does this make any sense?
-    let mut stat = (*scope).clone();
-    for (_, val) in stat.commands.iter_mut() {
-        let mut cmd = None;
-        match val {
-            &mut Command::UserHere(ref mut arg_names, ref mut list) => {
-                cmd = Some(Command::User(
-                    arg_names.clone(),
-                    ValueClosure(scope.clone(), Box::new(list.clone()))
-                ))
-            },
-            _ => {}
-        };
-        if let Some(c) = cmd {
-            *val = c;
-        }
+    // TODO improve perf
+    let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new() };
+    for (key, _) in scope.commands.iter() {
+        stat.commands.insert(key.clone(), Command::InOther(scope.clone()));
     }
     Rc::new(stat)
 }

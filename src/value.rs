@@ -16,90 +16,165 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
+#[derive(Debug)]
 pub struct ValueClosure(pub Rc<Scope>, pub Box<Rope<'static>>);
+
+impl ValueClosure {
+    fn from<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> ValueClosure {
+        ValueClosure(scope, Box::new(rope.make_static()))
+    }
+}
+
 
 // A Value is something that can be used as a parameter to a macro,
 // or as a return value.
 #[derive(Debug)]
-pub enum Value {
-    Str(String),
-    List(Vec<Value>),
-    Tagged(Tag,Box<Value>),
+pub enum Value<'s> {
+    Str(Cow<'s, str>),
+    List(Vec<&'s Value<'s>>),
+    OwnedList(Vec<Value<'s>>),
+    Tagged(Tag,Box<Value<'s>>),
     Closure(ValueClosure),
     Bubble(ValueClosure) // <- gets auto-expanded when it reaches its original scope
 }
 
-// An Atom represents an "atomic" piece of text that is to be expanded.
-#[derive(Debug)]
-pub enum Atom<'s> {
-    Chars(Cow<'s, str>),
-    Val(Cow<'s, Value>) // TODO avoid copies
+pub use Value::*;
+
+impl ValueClosure {
+    pub fn force_clone(&self) -> ValueClosure {
+        match self {
+           &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
+        }
+    }
 }
 
+impl<'s,'t> Value<'s> {
+    pub fn make_static(&'t self) -> Value<'static> {
+        match self {
+            // FIXME: Cow::Owned will cause excessive copying later
+            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
+            &List(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
+            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
+            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.make_static())) },
+            &Closure(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
+            &Bubble(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
+        }
+    }
+}
 
+impl<'s> Leaf<'static> {
+    pub fn dupe(&'s self) -> Leaf<'s> {
+        // AVOID USING THIS
+        match self {
+            &Val(ref v) => Val(v),
+            &Own(ref v) => Val(v),
+            &Chr(ref v) => Chr(Cow::Owned(v.clone().into_owned())),
+        }
+    }
+}
 
+impl<'s> Rope<'static> {
+    pub fn dupe(&'s self) -> Rope<'s> { 
+        match self {
+            &Rope::Node(ref l, ref r) => Rope::Node(Box::new(l.dupe()),Box::new(r.dupe())),
+            &Rope::Leaf(ref l) => Rope::Leaf(l.dupe()),
+            &Rope::Nil => Rope::Nil
+        }
+    }
+}
 /* UNBALANCED, BORROWED rope data structure
  * Slightly inspired by: https://github.com/mthadley/rupe/blob/master/src/lib.rs
  * (Not quite a rope at the moment) */
+
+#[derive(Debug)]
+pub enum Leaf<'s> {
+    Val(&'s Value<'s>),
+    Own(Box<Value<'s>>),
+    Chr(Cow<'s, str>)
+}
+
+use Leaf::*;
+
 #[derive(Debug)]
 pub enum Rope<'s> {
     Node(Box<Rope<'s>>, Box<Rope<'s>>),
-    Chars(Cow<'s, str>),
-    Val(Cow<'s, Value>),
-    Nothing
+    Leaf(Leaf<'s>),
+    Nil
 }
 
-#[derive(Debug)]
-pub enum Token<'f> {
-    CommandName(Rope<'f>),
-    StartParen,
-    EndParen,
-    RawParam(Rope<'f>),
-    Semicolon(Rope<'f>),
-    Text(Rope<'f>)
+
+impl<'s> Leaf<'s> {
+    pub fn to_str(&self) -> Option<&Cow<'s, str>> {
+        match self {
+            &Leaf::Chr(ref c) => { Some(c) },
+            &Leaf::Val(&Value::Str(ref v)) => { Some(v) }
+            &Leaf::Own(ref v) => {
+                match &**v {
+                    &Value::Str(ref v) => { Some(v) },
+                    _ => None
+                }
+            },
+            _ => None
+        }
+    }
+    pub fn to_val(&self) -> &Value {
+        match self {
+            &Leaf::Chr(_) => { panic!() },
+            &Leaf::Val(ref v) => { v }
+            &Leaf::Own(ref v) => { v }
+        }
+    }
+    pub fn make_static(&self) -> Leaf<'static> { match self {
+        // TODO avoid this at all costs
+        &Chr(ref c) => {
+            let owned = Cow::Owned(c.clone().into_owned());
+            Leaf::Chr(owned)
+        },
+        &Val(ref v) => { Leaf::Own( Box::new( v.make_static() )) },
+        &Own(ref v) => { Leaf::Own( Box::new( v.make_static() ))  }
+    } }
+
+
 }
 
-pub use Token::*;
 
-impl Rope<'static> {
-
-}
 
 impl<'s> Rope<'s> {
-    pub fn shallow_copy(&'s self) -> Rope<'s> {
-        // SLOOOOW may need to use refcells or something?
+/*    fn force_clone(&self) -> Rope<'static> {
         match self {
-            &Rope::Nothing => { Rope::Nothing },
+            &Rope::Nil => { Rope::Nil },
             &Rope::Node(ref l, ref r) => {
                 Rope::Node(
                     Box::new( l.shallow_copy() ),
                     Box::new( r.shallow_copy() )
                 )
             },
-            &Rope::Chars(ref c) => {
-                Rope::Chars(Cow::Borrowed(&*c))
-            },
-            &Rope::Val(ref v) => { Rope::Val(Cow::Borrowed(&*v)) }
+            &Rope::Char(ref c) => { Rope::Char(Cow::Owned(c.clone().into_owned())) }
+            &Rope::Val(ref v) => { Rope::Val(Cow::Owned(v.clone().into_owned())) }
         }
     }
+*/
     pub fn new() -> Rope<'s> {
-        return Rope::Nothing
+        return Rope::Nil
     }
+
+
 
     pub fn make_static(&self) -> Rope<'static> {
         match self {
-            &Rope::Nothing => { Rope::Nothing },
+            &Rope::Nil => { Rope::Nil },
             &Rope::Node(ref l, ref r) => {
                 Rope::Node(
                     Box::new(l.make_static()),
                     Box::new(r.make_static())
                 )
             },
-            &Rope::Chars(ref c) => {
+            &Rope::Leaf(Chr(ref c)) => {
                 let owned = Cow::Owned((**c).to_owned());
-                Rope::Chars(owned)
+                Rope::Leaf(Leaf::Chr(owned))
             },
-            &Rope::Val(ref v) => { Rope::Val( Cow::Owned( v.clone().into_owned() ) ) }
+            &Rope::Leaf(Val(ref v)) => { Rope::Leaf( Leaf::Own( Box::new( v.make_static() ) )) },
+            &Rope::Leaf(Own(ref v)) => { Rope::Leaf( Leaf::Own( Box::new( v.make_static() ) )) },
         }
     }
 
@@ -110,37 +185,105 @@ impl<'s> Rope<'s> {
 
     pub fn is_empty(&self) -> bool {
          match self {
-            &Rope::Nothing => { true }
-            &Rope::Node(ref l, ref r) => { l.is_empty() || r.is_empty() }
-            &Rope::Chars(ref c) => { c.len() == 0 }
-            &Rope::Val(_) => { false }
+            &Rope::Nil => { true }
+
+            &Rope::Node(ref l, ref r) => { l.is_empty() && r.is_empty() }
+            &Rope::Leaf(Leaf::Chr(ref c)) => { c.len() == 0 }
+            &Rope::Leaf(Leaf::Val(_)) => { false }
+            &Rope::Leaf(Leaf::Own(_)) => { false }
         }
     }
 
-    // may want to make this stuff iterative
-
-    pub fn atomize<'f>(&'f self) -> Vec<Atom<'f>> {
-        // SLOOOW
+    pub fn is_white(&self) -> bool {
         match self {
-            &Rope::Nothing => { vec![] },
-            &Rope::Node(ref left, ref right) => {
-                let mut v = left.atomize();
-                v.extend(right.atomize());
-                v
-            },
-            &Rope::Val(ref v) => { vec![
-                Atom::Val(Cow::Borrowed(&*v))
-            ] },
-            &Rope::Chars(ref c) => { vec![ Atom::Chars((*c).clone()) ] }
+           &Rope::Nil => { true }
+           &Rope::Node(ref l, ref r) => { l.is_white() && r.is_white() }
+           &Rope::Leaf(Leaf::Chr(ref c)) =>  { !c.chars().any(|x| { x.is_whitespace() }) }
+           &Rope::Leaf(Leaf::Val(_)) => { true  }
+           &Rope::Leaf(Leaf::Own(_)) => { true }
         }
-
     }
-    pub fn split_at<'r : 's, 'q, F : FnMut(char) -> bool>
+
+ //   pub fn walk<T>(
+
+    // use wlak more
+    pub fn values(self) -> Vec<Value<'s>> {
+        let mut values = vec![];
+        self.walk(|leaf| { match leaf {
+            &Chr(_) => {},
+            &Val(ref v) => { values.push(v.make_static()) },
+            &Own(ref v) => { values.push(v.make_static()) }
+        } });
+        values
+    }
+
+    fn walk<F : FnMut(&Leaf<'s>)> (&self, mut todo: F) {
+        let mut stack : Vec<&Rope<'s>> = vec![
+            &self
+        ];
+        while let Some(top) = stack.pop() { match top {
+            &Rope::Nil => { }
+            &Rope::Node(ref l, ref r) => {
+                stack.push(r);
+                stack.push(l);
+            }
+            &Rope::Leaf(ref l) => { todo(l) }
+        } }
+    }
+
+    pub fn to_str(&self) -> Cow<'s, str> {
+        let mut string : Cow<'s, str> = Cow::from("");
+        self.walk(|v|{
+            match v.to_str().unwrap() {
+                // TODO avoid copies
+                &Cow::Borrowed(ref x) => { string += x.clone(); },
+                &Cow::Owned(ref x) => { string += &x.clone()[..] }
+            }
+        });
+        string
+    }
+
+    pub fn to_leaf(self, lists_allowed: bool) -> Leaf<'s> {
+        match self {
+            Rope::Leaf(Val(ref l)) => { return Val(l) }
+            Rope::Leaf(Own(ref l)) => { return Own(Box::new(l.make_static())) }
+            Rope::Leaf(Chr(_))
+            | Rope::Nil => { panic!() },
+            Rope::Node(_, _) => {
+                if !self.is_white() {
+                    Leaf::Own(Box::new(Value::Str(self.to_str())))
+                } else {
+                    let mut vals = self.values();
+                    match vals.len() {
+                        0 => {
+                            panic!() // TODO fix
+                            //Leaf::Own(Box::new(Value::Str(self.to_str())))
+                        },
+                        1 => {
+                            Leaf::Own(Box::from(vals.remove(0)))
+                        },
+                        _ => {
+                            if lists_allowed {
+                                Leaf::Own(Box::from(Value::OwnedList(
+                                    vals
+                                )))
+                            } else {
+                                panic!("Cannot create implicit lists in macro return values");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+        // may want to make this stuff iterative
+    pub fn split_at<'q, F : FnMut(char) -> bool>
         (&mut self, match_val : bool, matcher: &mut F)
         -> Option<Rope<'s>>  {
         let mut out : Option<Rope<'s>> = None;
+        let mut make_nil = false;
         match self {
-            &mut Rope::Nothing => { },
+            &mut Rope::Nil => { },
             &mut Rope::Node(ref mut left, ref mut right) => {
                 match left.split_at(match_val, matcher) {
                     Some(result) => {
@@ -150,55 +293,51 @@ impl<'s> Rope<'s> {
                         match right.split_at(match_val, matcher) {
                             Some(result) => { 
                                 out = Some(
-                                    replace(left, Box::new(Rope::Nothing))
+                                    replace(left, Box::new(Rope::Nil))
                                         .concat(result)
                                 );
                             },
                             None => {
-                                replace(left,Box::new(Rope::Nothing));
-                                replace(right, Box::new(Rope::Nothing));
                             }
                         }
                     }
                 }
             },
-            &mut Rope::Val(Cow::Owned(_)) => {
+            &mut Rope::Leaf(Leaf::Val(v)) => {
                 if match_val {
                 } else {
                     // todo fix this
-                    out = Some(replace(self, Rope::Nothing))
+                    out = Some(replace(self, Rope::Nil))
                 }
             },
-            &mut Rope::Val(Cow::Borrowed(v)) => {
+            &mut Rope::Leaf(Leaf::Own(ref v)) => {
                 if match_val {
                 } else {
-                    out = Some(Rope::Val(Cow::Borrowed(v)));
-                    *self = Rope::Nothing
+                    out = Some(Rope::Leaf(Leaf::Own( Box::new( v.make_static() ))) );
+                    make_nil = true;
                 }
             },
-            &mut Rope::Chars(Cow::Borrowed(ref mut cow)) => {
+            &mut Rope::Leaf(Leaf::Chr(ref mut cow)) => {
                 if let Some(idx) = cow.find(|x| { matcher(x) }) {
-                    let pair = (**cow).split_at(idx);
-                    out = Some(Rope::Chars(Cow::Borrowed(&*pair.0)));
-                    replace(cow, &*pair.1);
+                    let ncow = {
+                        let pair = cow.split_at(idx);
+                    // TODO copying here
+                        out = Some(Rope::Leaf(Leaf::Chr(Cow::Owned(pair.0.to_owned()))).make_static());
+                        Cow::Owned(pair.1.to_owned())
+                    };
+                    *cow = ncow;
                 }
             },
-            &mut Rope::Chars(Cow::Owned(ref mut string)) => {
-                // relatively slow; hence borrowed ropes are preferred
-                // TODO borrow closure ropes when possible
-                if let Some(idx) = string.find(|x| { matcher(x) }) {
-                    let rest = string.split_off(idx);
-                    out = Some(Rope::Chars(Cow::Owned(string.clone())));
-                    *string = rest
-                }
-            }
         };
+        if make_nil {
+            *self = Rope::Nil
+        }
         out
     }
-
+/*
     pub fn get_str(&self) -> Cow<str> {
         match self {
-            &Rope::Nothing => { Cow::Borrowed("") },
+            &Rope::Nil => { Cow::Borrowed("") },
             &Rope::Chars(Cow::Owned(ref ch)) => { Cow::Owned(ch.clone()) },
             &Rope::Chars(Cow::Borrowed(ch)) => { Cow::Borrowed(ch) },
             &Rope::Val(_) => { panic!("Unexpected value!") },
@@ -207,32 +346,31 @@ impl<'s> Rope<'s> {
             }
         }
     }
-
+*/
     pub fn get_char(&self) -> Option<char> {
         match self {
-            &Rope::Nothing => { None },
+            &Rope::Nil => { None },
             &Rope::Node(ref left, ref right) => { left.get_char().or(right.get_char()) },
-            &Rope::Val(_) => { panic!("Unexpected value!") },
-            &Rope::Chars(ref ch) => { ch.chars().next() }
+            &Rope::Leaf(Chr(ref ch)) => { ch.chars().next() }
+            &Rope::Leaf(_) => { panic!("Unexpected value!") },
         }
     }
 
     pub fn split_char(&mut self) -> Option<char> {
 
         match self {
-            &mut Rope::Nothing => { None },
+            &mut Rope::Nil => { None },
             &mut Rope::Node(ref mut left, ref mut right) => {
                 left.split_char().or_else(|| { right.split_char() })
             },
-            &mut Rope::Val(_) => { panic!("Unexpected value!") }, 
-            &mut Rope::Chars(Cow::Owned(ref mut ch)) => {
+            &mut Rope::Leaf(Leaf::Chr(Cow::Owned(ref mut ch))) => {
                 if ch.len() > 0 {
                     Some(ch.remove(0))
                 } else {
                     None
                 }
             },
-            &mut Rope::Chars(Cow::Borrowed(ref mut ch)) => {
+            &mut Rope::Leaf(Leaf::Chr(Cow::Borrowed(ref mut ch))) => {
                 if ch.len() > 0 {
                     let (first, rest) = ch.split_at(1);
                     *ch = rest;
@@ -241,6 +379,7 @@ impl<'s> Rope<'s> {
                     None
                 }
             }
+            &mut Rope::Leaf(_) => { panic!("Unexpected value!") }, 
         }
     }
 }
@@ -249,9 +388,7 @@ impl<'s> Rope<'s> {
 
 
 
-
 pub use Value::*;
-pub use Atom::*;
 /*
 impl fmt::Debug for ValueList {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -270,7 +407,6 @@ impl fmt::Debug for ValueList {
         Ok(())
     }
 }
-*/
 impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
@@ -290,7 +426,6 @@ impl fmt::Debug for ValueClosure {
         Ok(())
     }
 }
-/*
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -313,7 +448,6 @@ impl fmt::Debug for Value {
         Ok(())
     }
 }
-*/
 impl PartialEq for Value {
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
@@ -329,3 +463,4 @@ impl PartialEq for Value {
     }
 
 }
+*/
