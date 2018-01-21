@@ -133,18 +133,21 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     }
     fn semi_param(&mut self, scope: &Rc<Scope>, rope: Rope<'s>) -> Rope<'s> {
                 let mut idx = self.instr.len() - 1;
+        let level = 0;
         while idx >= 0  {
             if let Instr::StartCmd = self.instr[idx] {
-                break;
-            } else {
-                idx -= 1;
+                level -= 1;
+                if level == 0 { break; }
+            } else if let Instr::Call(_) = self.instr[idx] {
+                level += 1;
             }
+            idx -= 1;
         }
         if idx < 0 {
             panic!("Semi param outside of any command");
         } else if self.calls.len() > 1 {
-            panic!("TEST {:?}", self.instr);
             let file = self.instr.split_off(idx);
+            panic!("TEST {:?}", file);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
             let result = do_expand(file, scope).get_leaf().make_static();
