@@ -22,5 +22,5 @@ Hello world :) =
   #change_char(@)(#end_paren);
   world
 @
-  #change_char(@)(#end_paren);
+  #change_char(@)(#literal{)});
 :@

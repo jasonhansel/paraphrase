@@ -107,16 +107,6 @@ pub enum Rope<'s> {
 use std::ptr;
 
 impl<'s> Leaf<'s> {
-    fn can_bubble(self, scope: &Rc<Scope>) -> bool {
-        if let &Value::Bubble(ref closure)  = self.to_val() {
-            let &ValueClosure(ref inner_scope, ref contents) = closure;
-            if ptr::eq(&**inner_scope as *const Scope, &**scope as *const Scope) {
-                return true
-            }
-        }
-        return false
-    }
-
     pub fn bubble(&self, scope: &Rc<Scope>) -> Option<Rope<'s>> {
         if let Some(&Value::Bubble(ref closure)) = self.as_val() {
             let &ValueClosure(ref inner_scope, ref contents) = closure;
@@ -153,13 +143,7 @@ impl<'s> Leaf<'s> {
     }
 
 
-    pub fn to_val(&self) -> &Value {
-        match self {
-            &Leaf::Chr(_) => { panic!() },
-            &Leaf::Val(ref v) => { v }
-            &Leaf::Own(ref v) => { v }
-        }
-    }
+
 
     pub fn make_static(&self) -> Leaf<'static> { match self {
         // TODO avoid this at all costs
@@ -219,6 +203,7 @@ impl<'s> Rope<'s> {
         match self {
             &mut Rope::Leaf(ref mut l) => {
                 if let Some(bubble) = l.bubble(scope) {
+                    println!("BUBBLER {:?}", bubble);
                     replace(l, new_expand(scope, bubble));
                 }
             },
@@ -313,10 +298,10 @@ impl<'s> Rope<'s> {
 
     pub fn get_leaf(self) -> Leaf<'s> {
         match self {
-            Rope::Leaf(Val(ref l)) => { return Val(l) }
+            Rope::Nil => { panic!() }
+           Rope::Leaf(Val(ref l)) => { return Val(l) }
             Rope::Leaf(Own(ref l)) => { return Own(Box::new(l.make_static())) }
-            Rope::Leaf(Chr(_))
-            | Rope::Nil => { panic!() },
+            Rope::Leaf(Chr(c)) => { return Own(Box::new( Value::Str( Cow::Owned( c.clone().into_owned() ) ))) }
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
                 if !self.is_white() {

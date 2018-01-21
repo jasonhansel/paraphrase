@@ -92,7 +92,7 @@ pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Com
             eval( other_scope, scope, command, args)
          },
          &Command::Native(ref code) => {
-             code(&scope, args)
+             code(&scope, args )
          },
          &Command::Immediate(ref val) => {
              Leaf::Own( Box::new( val.make_static() ) )
@@ -112,7 +112,7 @@ pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Com
                      .unwrap()
                      .commands
                      .insert(vec![Ident(name.to_owned() )],
-                     Command::Immediate( arg.to_val().make_static() )
+                     Command::Immediate( arg.as_val().unwrap().make_static() )
                  );
              }
              let out = new_expand(&new_scope, contents.make_static() );

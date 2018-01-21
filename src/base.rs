@@ -13,8 +13,8 @@ use std::collections::HashMap;
 // TODO: issue trying to change 'w' back to 'world'
 
 fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    match (args[0].to_val(), args[1].to_val(), args[2].to_val()) {
-        (&Str(ref n), replacement, &Closure(ValueClosure(ref inner_scope, ref h))) => {
+    match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
+        (&Str(ref n), &Str(ref replacement), &Closure(ValueClosure(ref inner_scope, ref h))) => {
             let needle = n.chars().next().unwrap();
             let mut haystack = h.make_static();
             let prefix = haystack.split_at(true, &mut |ch| {
@@ -23,7 +23,7 @@ fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
             haystack.split_char(); // take the matched character out
             let new_closure = ValueClosure(inner_scope.clone(),
                 Box::new( prefix.concat(
-                    Rope::Leaf(Leaf::Val(replacement))
+                    Rope::Leaf(Leaf::Chr(Cow::Borrowed(replacement)))
                 ).concat(haystack.make_static()).make_static() )
             );
             Leaf::Own(Box::new(Value::Bubble(new_closure)))
@@ -36,7 +36,7 @@ fn end_paren<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     Leaf::Own(Box::new(Value::Str(Cow::from(")".to_owned()))))
 }
 fn literal<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    match args[0].to_val() {
+    match args[0].as_val().unwrap() {
         &Closure(ValueClosure(_,ref closure)) => {
             Leaf::Own(Box::new(Value::Str(closure.to_str().unwrap())))
         },
@@ -45,7 +45,7 @@ fn literal<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
 }
 
 fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    match (args[0].to_val(), args[1].to_val(), args[2].to_val()) {
+    match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
         (&Str(ref name_args),
         &Closure(ref closure),
         &Closure(ValueClosure(_, ref to_expand))) => {
@@ -82,7 +82,7 @@ fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
 }
 
 fn expand<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    match args[0].to_val() {
+    match args[0].as_val().unwrap() {
         &Closure(ValueClosure(ref scope, ref contents)) => {
             new_expand(scope, contents.dupe() ).make_static()
         },
@@ -91,7 +91,7 @@ fn expand<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
 }
 
 fn rescope<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    match (args[0].to_val(), args[1].to_val()) {
+    match (args[0].as_val().unwrap(), args[1].as_val().unwrap()) {
     (&Closure(ValueClosure(ref inner_scope, _)),
     &Closure(ValueClosure(_, ref contents))) => {
         Leaf::Own(Box::from(

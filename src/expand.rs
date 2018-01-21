@@ -122,7 +122,10 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     fn end_paren(&mut self) {
         *( self.calls.last_mut().unwrap() ) += 1;
         println!("END PAR");
-        self.instr.push(Instr::Concat(self.parens.pop().unwrap()));
+        let num = self.parens.pop().unwrap();
+        if num != 1 {
+            self.instr.push(Instr::Concat(num));
+        }
     }
     fn raw_param(&mut self, rope: Rope<'s>) {
         *( self.calls.last_mut().unwrap() ) += 1;
@@ -146,6 +149,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
             // as the old raw_param behavior.
             let result = do_expand(file, scope).get_leaf().make_static();
             if let Some(bubble) = result.bubble(scope) {
+                panic!("HERE");
                 return bubble
             } else {
                 panic!("Hit an in-call semiparameter, but wasn't a bubble");
