@@ -9,3 +9,8 @@ Hello world Hello == #z(Hello) #h
 #define(w){new world order};
 Hello world == #x
 Hello new world order world x == #q{ } x
+Hello world :)
+Hello world :(
+
+#replace_next{@}(#sigil);
+@h

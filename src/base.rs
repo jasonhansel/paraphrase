@@ -31,13 +31,8 @@ fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
             let mut new_scope = dup_scope(scope);
             // circular refs here?
             Rc::get_mut(&mut new_scope)
-            .unwrap()
-            .commands
-            .insert(parts,
-            Command::User(params,
-                // TODO: fix scpoe issues
-                closure.force_clone()
-            ));
+                .unwrap()
+                .add_user(parts, params, closure);
             // TODO avoid clone here
             new_expand(&new_scope.clone(), to_expand.dupe() ).make_static()
         },
@@ -71,10 +66,7 @@ fn rescope<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
 
 //TODO handle EOF propelry
 pub fn default_scope() -> Scope {
-    let mut scope = Scope {
-        sigil: '#',
-        commands: HashMap::new()
-    };
+    let mut scope = Scope::new('#');
     // idea: source maps?
     // add 3rd param (;-kind)
     scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ],

@@ -187,7 +187,7 @@ fn parse<'f, 'r, 's : 'r>(
                     rope = Rope::new();
                 }
 
-                } else {
+            } else {
                 rope.split_at(false, &mut |ch : char| {
                     println!("SCANW {:?}", ch);
                     if ch.is_whitespace() {

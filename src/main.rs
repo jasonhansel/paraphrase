@@ -81,42 +81,6 @@ fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Err
 }
 
 
-fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<Leaf<'v>>) -> Leaf<'v> {
-   match cmd_scope.commands.get(&command).unwrap() {
-        &Command::InOther(ref other_scope) => {
-           eval( other_scope, scope, command, args)
-        },
-        &Command::Native(ref code) => {
-            code(&scope, args)
-        },
-        &Command::Immediate(ref val) => {
-            Leaf::Own( Box::new( val.make_static() ) )
-        },
-        &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
-            // todo handle args
-            //clone() scope?
-            let mut new_scope = dup_scope(inner_scope);
-            if arg_names.len() != args.len() {
-                panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
-            }
-            for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
-                // should it always take no arguments?
-                // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
-                // or a Tagged). coerce sometimes?
-                Rc::get_mut(&mut new_scope)
-                    .unwrap()
-                    .commands
-                    .insert(vec![Ident(name.to_owned() )],
-                    Command::Immediate( arg.to_val().make_static() )
-                );
-            }
-            let out = new_expand(&new_scope, contents.make_static() );
-            println!("OUTP {:?} {:?}", out, contents);
-            out.make_static()
-        }
-    }
-}
-
 
 
 /*

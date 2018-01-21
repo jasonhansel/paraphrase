@@ -34,18 +34,40 @@ pub enum CommandPart {
 }
 pub use CommandPart::*;
 
-#[derive(Debug)]
 pub struct Scope {
     pub sigil: char,
-    pub commands: HashMap<Vec<CommandPart>, Command>
+    commands: HashMap<Vec<CommandPart>, Command>
+}
+
+impl Debug for Scope {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        let mut first = true;
+        write!(f, "[scope @")?;
+        for k in self.commands.keys() {
+            if first { first = false; } else { write!(f, "|")?; }
+            k.fmt(f)?;
+        }
+        write!(f, "]")
+    }
 }
 
 
 impl Scope {
+    pub fn new(sigil: char) -> Scope {
+        Scope {
+            sigil: sigil,
+            commands: HashMap::new()
+        }
+    }
+
     pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
         for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>
     ) {
         self.commands.insert(parts, Command::Native(Box::new(p)));
+    }
+
+    pub fn add_user(&mut self, parts: Vec<CommandPart>, params: Vec<String>, closure: &ValueClosure) {
+        self.commands.insert(parts, Command::User(params, closure.force_clone()));
     }
 
     pub fn has_command(&self, parts: &[CommandPart]) -> bool {

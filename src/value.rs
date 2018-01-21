@@ -429,13 +429,8 @@ impl fmt::Debug for ValueList {
 impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
-        write!(f, "[@");
-        let mut first = true;
-        for k in scope.commands.keys() {
-            if first { first = false; } else { write!(f, "|")?; }
-            k.fmt(f)?;
-        }
-        write!(f, "]CODE<");
+        scope.fmt(f)?;
+        write!(f, "CODE<");
         x.walk(|i| {
             i.fmt(f);
         });
