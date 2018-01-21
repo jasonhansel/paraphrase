@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
+use std::ptr;
 
 pub enum Command {
     Native(Box<for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>>),

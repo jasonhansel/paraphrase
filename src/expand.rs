@@ -20,7 +20,7 @@ pub trait TokenVisitor<'s, 't : 's> {
     fn start_paren(&mut self);
     fn end_paren(&mut self);
     fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, Rope<'s>) -> Rope<'s>;
+    fn semi_param(&mut self, &Rc<Scope>, Rope<'s>) -> Rope<'s>;
     fn text(&mut self, Rope<'s>);
     fn done(&mut self);
 }
@@ -30,7 +30,8 @@ enum Instr<'s> {
     Push(Rope<'s>),
     Concat(u16),
     Call(u16, Vec<CommandPart>),
-    Close(Rope<'s>)
+    Close(Rope<'s>),
+    StartCmd
 }
 
 struct Expander<'s> {
@@ -41,6 +42,53 @@ struct Expander<'s> {
 
 // are ropes stil necessary? basically just using them as linked lists now, I think
 
+// TODO think thru bubbling behavior a bit more
+
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: &'s Rc<Scope>) -> Rope<'s> {
+    let mut stack : Vec<Rope<'s>> = vec![];
+    for i in instr.into_iter() { match i {
+        Instr::StartCmd => {}
+        Instr::Push(r) => { stack.push(r); },
+        Instr::Concat(cnt) => {
+            let mut new_rope = Rope::new();
+            let idx = stack.len() - cnt as usize;
+            for item in stack.split_off(idx) {
+                println!("CONCATTING {:?}", item);
+                new_rope = new_rope.concat(item.make_static());
+            }
+            println!("POSTCONC {:?}", new_rope);
+            stack.push(
+                new_rope
+            );
+        },
+        Instr::Close(r) => {
+            println!("CLOSING {:?}", r);
+            let stat = r.make_static();
+            stack.push(
+                Rope::Leaf( Leaf::Own(
+                        Box::new(
+                            Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ))
+                    )
+            );
+        }
+        Instr::Call(cnt, cmd) => {
+            println!("CALLING {:?} {:?}", stack.len(), cnt);
+            let idx = stack.len() - cnt as usize;
+            let args = stack.drain(idx..)
+                .map(|x| { x.to_leaf(scope) })
+                .collect::<Vec<_>>();
+            println!("ARGDAT {:?} {:?}", cnt, cmd);
+            let result = eval(scope, scope.clone(), cmd, args);
+            println!("RES {:?}", result);
+            stack.push( Rope::Leaf( result ) );
+        }
+
+    } }
+    if stack.len() != 1 {
+        panic!("Wrong stack size!");
+    }
+    stack.remove(0)
+}
 
 impl<'s> Expander<'s> {
     fn new() -> Expander<'s> {
@@ -50,57 +98,15 @@ impl<'s> Expander<'s> {
             instr: vec![]
         }
     }
-    fn do_expand(self, scope: &'s Rc<Scope>) -> Leaf<'s> {
-        let mut stack : Vec<Rope<'s>> = vec![];
-        println!("RUNNING {:?}", self.instr);
-        for i in self.instr.into_iter() { match i {
-            Instr::Push(r) => { stack.push(r); },
-            Instr::Concat(cnt) => {
-                let mut new_rope = Rope::new();
-                let idx = stack.len() - cnt as usize;
-                for item in stack.split_off(idx) {
-                    println!("CONCATTING {:?}", item);
-                    new_rope = new_rope.concat(item.make_static());
-                }
-                println!("POSTCONC {:?}", new_rope);
-                stack.push(
-                    new_rope
-                );
-            },
-            Instr::Close(r) => {
-                println!("CLOSING {:?}", r);
-                let stat = r.make_static();
-                stack.push(
-                    Rope::Leaf( Leaf::Own(
-                            Box::new(
-                                Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ))
-                        )
-                );
-            }
-            Instr::Call(cnt, cmd) => {
-                let idx = stack.len() - cnt as usize;
-                let args = stack.drain(idx..)
-                    .map(|x| { x.to_leaf(true) })
-                    .collect::<Vec<_>>();
-                println!("ARGDAT {:?} {:?}", cnt, cmd);
-                let result = eval(scope, scope.clone(), cmd, args);
-                println!("RES {:?}", result);
-                stack.push(Rope::Leaf( result ));
-            }
-
-        } }
-        if stack.len() != 1 {
-            panic!("Wrong stack size!");
-        }
-        let rv = stack.remove(0).to_leaf(false);
-        println!("SRESULT {:?}", rv);
-        rv
+    fn do_expand(self, scope: &'s Rc<Scope>) -> Rope<'s> {
+        do_expand(self.instr, scope)
     }
-
 }
 
 impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     fn start_command(&mut self, _: Cow<'s, str>) {
+        println!("START CMD");
+        self.instr.push(Instr::StartCmd);
         self.calls.push(0);
     }
     fn end_command(&mut self, cmd: Vec<CommandPart>) {
@@ -120,12 +126,35 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         *( self.calls.last_mut().unwrap() ) += 1;
         self.instr.push(Instr::Close(rope));
     }
-    fn semi_param(&mut self, rope: Rope<'s>) -> Rope<'s> {
-        *( self.calls.last_mut().unwrap() ) += 1;
-        // TODO inner expansion
-        self.instr.push(Instr::Close(rope));
-        println!("ATSEMI {:?} {:?}", self.calls, self.parens);
-        Rope::new()
+    fn semi_param(&mut self, scope: &Rc<Scope>, rope: Rope<'s>) -> Rope<'s> {
+                let mut idx = self.instr.len() - 1;
+        while idx >= 0  {
+            if let Instr::StartCmd = self.instr[idx] {
+                break;
+            } else {
+                idx -= 1;
+            }
+        }
+        if idx < 0 {
+            panic!("Semi param outside of any command");
+        } else if self.calls.len() > 1 {
+            panic!("TEST {:?}", self.instr);
+            let file = self.instr.split_off(idx);
+            // TODO: if there are no calls in progress, this should be the same
+            // as the old raw_param behavior.
+            let result = do_expand(file, scope).get_leaf().make_static();
+            if let Some(bubble) = result.bubble(scope) {
+                return bubble
+            } else {
+                panic!("Hit an in-call semiparameter, but wasn't a bubble");
+            }
+        } else {
+            // TODO: excessive recursion here
+            *( self.calls.last_mut().unwrap() ) += 1;
+            self.instr.push(Instr::Close(rope));
+            // we can just finish the call
+            return Rope::new()
+        }
     }
     fn text(&mut self, rope: Rope<'s>) {
         if let Some(l) = self.parens.last_mut() { *l += 1; }
@@ -210,14 +239,11 @@ fn parse<'f, 'r, 's : 'r>(
                     println!("HIT SEMI");
                     parts.push(Param);
                     // TODO get this working better
-                    let _ = visitor.semi_param(rope);
-                    //stack.push(ParseEntry::Command(parts));
-                    if scope.has_command(&parts[..]) {
-                        println!("COMMAND DONE {:?}", parts);
-                        visitor.end_command(parts.split_off(0));
-                        // continue to next work item
-                    } 
-                    break;
+                    if !scope.has_command(&parts) {
+                        panic!("Invalid semicolon");
+                    }
+                    rope = visitor.semi_param(&scope, rope);
+                    stack.push(ParseEntry::Command(parts));
                 } else if chr == '{' {
                     let mut raw_level = 1;
                     let param = rope.split_at(true, &mut |ch| { 
@@ -306,9 +332,9 @@ impl<'s> Value<'s> {
     }
 }
 
-
+// TODO: make sure user can define their own bubble-related fns.
 pub fn new_expand<'f, 'r : 'f>(scope: &'f Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
-    expander.do_expand(&scope)
+    expander.do_expand(&scope).to_leaf(scope)
 }

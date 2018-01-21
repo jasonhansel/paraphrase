@@ -11,6 +11,8 @@ use std::io::{Read, Error, Write};
 use std::iter::{empty, once};
 use std::mem::{swap, replace};
 
+use expand::*;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
 
@@ -56,7 +58,7 @@ impl<'s,'t> Value<'s> {
             &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
             &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.make_static())) },
             &Closure(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
-            &Bubble(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
+            &Bubble(ValueClosure(ref sc, ref ro)) => { Bubble(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
         }
     }
 }
@@ -102,11 +104,35 @@ pub enum Rope<'s> {
 }
 
 
+use std::ptr;
+
 impl<'s> Leaf<'s> {
+    fn can_bubble(self, scope: &Rc<Scope>) -> bool {
+        if let &Value::Bubble(ref closure)  = self.to_val() {
+            let &ValueClosure(ref inner_scope, ref contents) = closure;
+            if ptr::eq(&**inner_scope as *const Scope, &**scope as *const Scope) {
+                return true
+            }
+        }
+        return false
+    }
+
+    pub fn bubble(&self, scope: &Rc<Scope>) -> Option<Rope<'s>> {
+        if let Some(&Value::Bubble(ref closure)) = self.as_val() {
+            let &ValueClosure(ref inner_scope, ref contents) = closure;
+            if ptr::eq(&**inner_scope as *const Scope, &**scope as *const Scope) {
+                return Some(contents.make_static())
+            }
+        }
+        return None
+    }
+
     pub fn to_str(&self) -> Option<&Cow<'s, str>> {
+        // TODO: may need to handle Bubbles here
         match self {
             &Leaf::Chr(ref c) => { Some(c) },
-            &Leaf::Val(&Value::Str(ref v)) => { Some(v) }
+
+            &Leaf::Val(&Value::Str(ref v)) => { Some(v) },
             &Leaf::Own(ref v) => {
                 match &**v {
                     &Value::Str(ref v) => { Some(v) },
@@ -116,6 +142,15 @@ impl<'s> Leaf<'s> {
             _ => None
         }
     }
+    pub fn as_val(&self) -> Option<&Value> {
+        match self {
+            &Leaf::Chr(_) => { None  },
+            &Leaf::Val(ref v) => { Some(v) }
+            &Leaf::Own(ref v) => { Some(v) }
+        }
+    }
+
+
     pub fn to_val(&self) -> &Value {
         match self {
             &Leaf::Chr(_) => { panic!() },
@@ -255,7 +290,15 @@ impl<'s> Rope<'s> {
         if has { Some(string) } else { None }
     }
 
-    pub fn to_leaf(self, lists_allowed: bool) -> Leaf<'s> {
+    pub fn to_leaf(self, scope: &'s Rc<Scope>) -> Leaf<'s> {
+        let mut l = self.get_leaf();
+        while let Some(bubble) = l.bubble(scope) {
+            l = new_expand(scope, bubble);
+        }
+        l
+    }
+
+    pub fn get_leaf(self) -> Leaf<'s> {
         match self {
             Rope::Leaf(Val(ref l)) => { return Val(l) }
             Rope::Leaf(Own(ref l)) => { return Own(Box::new(l.make_static())) }
@@ -264,7 +307,7 @@ impl<'s> Rope<'s> {
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
                 if !self.is_white() {
-                    println!("BUILTA {:?}", self.to_str());
+                    println!("BUILTA {:?}", self);
                     Leaf::Own(Box::new(Value::Str( self.to_str().unwrap() )))
                 } else {
                     match self.values_cnt() {

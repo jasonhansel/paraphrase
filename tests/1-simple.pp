@@ -12,5 +12,15 @@ Hello new world order world x == #q{ } x
 Hello world :)
 Hello world :(
 
-#replace_next{@}(#sigil);
-@h
+
+Hello world = #change_char(@)(#literal{#}){@h} #w
+
+Hello world :) =
+#change_char(@)(#literal{#});
+
+@z(
+  #change_char(@)(#end_paren);
+  world
+@
+  #change_char(@)(#end_paren);
+:@

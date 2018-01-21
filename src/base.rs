@@ -4,7 +4,44 @@ use scope::*;
 use value::*;
 use expand::*;
 use std::rc::Rc;
+use std::borrow::Cow;
 use std::collections::HashMap;
+
+// TODO: allow changing "catcodes"
+// TODO: better error handling
+// TODO: misc builtins or library fns (e.g. like m4, and stuff for types)
+
+fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    match (args[0].to_val(), args[1].to_val(), args[2].to_val()) {
+        (&Str(ref n), replacement, &Closure(ValueClosure(ref inner_scope, ref h))) => {
+            let needle = n.chars().next().unwrap();
+            let mut haystack = h.make_static();
+            let prefix = haystack.split_at(true, &mut |ch| {
+                ch == needle
+            }).unwrap();
+            haystack.split_char(); // take the matched character out
+            let new_closure = ValueClosure(dup_scope(inner_scope),
+                Box::new( prefix.concat(
+                    Rope::Leaf(Leaf::Val(replacement))
+                ).concat(haystack.make_static()).make_static() )
+            );
+            Leaf::Own(Box::new(Value::Bubble(new_closure)))
+        },
+        _ => { panic!() }
+    }
+}
+
+fn end_paren<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    Leaf::Own(Box::new(Value::Str(Cow::from(")".to_owned()))))
+}
+fn literal<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    match args[0].to_val() {
+        &Closure(ValueClosure(_,ref closure)) => {
+            Leaf::Own(Box::new(Value::Str(closure.to_str().unwrap())))
+        },
+        _ => { panic!() }
+    }
+}
 
 fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].to_val(), args[1].to_val(), args[2].to_val()) {
@@ -71,6 +108,20 @@ pub fn default_scope() -> Scope {
     // add 3rd param (;-kind)
     scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ],
         define);
+
+    // the below will test 
+    scope.add_native(vec![ Ident("change_char".to_owned()), Param, Param, Param ],
+        change_char
+    );
+    scope.add_native(vec![ Ident("end_paren".to_owned()) ],
+        end_paren
+    );
+    // 
+    scope.add_native(vec![ Ident("literal".to_owned()), Param ],
+        literal
+    );
+
+
     /*
     scope.add_native(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ],
         Command::IfEq
