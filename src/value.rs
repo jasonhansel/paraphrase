@@ -122,6 +122,8 @@ impl<'s> Leaf<'s> {
             let &ValueClosure(ref inner_scope, ref contents) = closure;
             if ptr::eq(&**inner_scope as *const Scope, &**scope as *const Scope) {
                 return Some(contents.make_static())
+            } else {
+                panic!("SAD BUBBLING"); // just a test
             }
         }
         return None
@@ -213,6 +215,20 @@ impl<'s> Rope<'s> {
         }
     }
 
+    pub fn debubble<'t>(&mut self, scope: &'s Rc<Scope>) {
+        match self {
+            &mut Rope::Leaf(ref mut l) => {
+                if let Some(bubble) = l.bubble(scope) {
+                    replace(l, new_expand(scope, bubble));
+                }
+            },
+            &mut Rope::Node(ref mut l, ref mut r) => {
+                l.debubble(scope);
+                r.debubble(scope);
+            },
+            &mut Rope::Nil => {}
+        }
+    }
 
     pub fn concat(self, other: Rope<'s>) -> Rope<'s> {
         Rope::Node(Box::new(self), Box::new(other))
@@ -290,12 +306,9 @@ impl<'s> Rope<'s> {
         if has { Some(string) } else { None }
     }
 
-    pub fn to_leaf(self, scope: &'s Rc<Scope>) -> Leaf<'s> {
-        let mut l = self.get_leaf();
-        while let Some(bubble) = l.bubble(scope) {
-            l = new_expand(scope, bubble);
-        }
-        l
+    pub fn to_leaf(mut self, scope: &'s Rc<Scope>) -> Leaf<'s> {
+        self.debubble(scope);
+        self.get_leaf()
     }
 
     pub fn get_leaf(self) -> Leaf<'s> {

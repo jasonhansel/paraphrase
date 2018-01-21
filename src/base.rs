@@ -10,6 +10,7 @@ use std::collections::HashMap;
 // TODO: allow changing "catcodes"
 // TODO: better error handling
 // TODO: misc builtins or library fns (e.g. like m4, and stuff for types)
+// TODO: issue trying to change 'w' back to 'world'
 
 fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].to_val(), args[1].to_val(), args[2].to_val()) {
@@ -20,7 +21,7 @@ fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
                 ch == needle
             }).unwrap();
             haystack.split_char(); // take the matched character out
-            let new_closure = ValueClosure(dup_scope(inner_scope),
+            let new_closure = ValueClosure(inner_scope.clone(),
                 Box::new( prefix.concat(
                     Rope::Leaf(Leaf::Val(replacement))
                 ).concat(haystack.make_static()).make_static() )
