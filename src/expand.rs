@@ -78,6 +78,8 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: &'s Rc<Scope>) -> Rope<'s> {
                 .map(|x| { x.to_leaf(scope) })
                 .collect::<Vec<_>>();
             println!("ARGDAT {:?} {:?}", cnt, cmd);
+            // TODO: currently there are lots of nested eval() calls when working with closures --
+            // e.g. with *macro definitions*
             let result = eval(scope, scope.clone(), cmd, args);
             println!("RES {:?}", result);
             stack.push( Rope::Leaf( result ) );

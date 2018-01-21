@@ -46,7 +46,7 @@ impl Debug for Scope {
         write!(f, "[scope @")?;
         for k in self.commands.keys() {
             if first { first = false; } else { write!(f, "|")?; }
-            k.fmt(f)?;
+            k[0].fmt(f)?;
         }
         write!(f, "]")
     }
