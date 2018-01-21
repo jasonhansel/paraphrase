@@ -16,7 +16,6 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
-#[derive(Debug)]
 pub struct ValueClosure(pub Rc<Scope>, pub Box<Rope<'static>>);
 
 impl ValueClosure {
@@ -198,7 +197,7 @@ impl<'s> Rope<'s> {
         match self {
            &Rope::Nil => { true }
            &Rope::Node(ref l, ref r) => { l.is_white() && r.is_white() }
-           &Rope::Leaf(Leaf::Chr(ref c)) =>  { !c.chars().any(|x| { x.is_whitespace() }) }
+           &Rope::Leaf(Leaf::Chr(ref c)) =>  { c.chars().all(|x| { x.is_whitespace() }) }
            &Rope::Leaf(Leaf::Val(_)) => { true  }
            &Rope::Leaf(Leaf::Own(_)) => { true }
         }
@@ -216,7 +215,15 @@ impl<'s> Rope<'s> {
         } });
         values
     }
-
+    pub fn values_cnt(&self) -> u32 {
+        let mut count = 0;
+        self.walk(|leaf| { match leaf {
+            &Chr(_) => {},
+            &Val(ref v) => { count += 1 }
+            &Own(ref v) => { count += 1 }
+        } });
+        count
+    }
     fn walk<F : FnMut(&Leaf<'s>)> (&self, mut todo: F) {
         let mut stack : Vec<&Rope<'s>> = vec![
             &self
@@ -231,16 +238,18 @@ impl<'s> Rope<'s> {
         } }
     }
 
-    pub fn to_str(&self) -> Cow<'s, str> {
+    pub fn to_str(&self) -> Option<Cow<'s, str>> {
+        let mut has = true;
         let mut string : Cow<'s, str> = Cow::from("");
         self.walk(|v|{
             match v.to_str().unwrap() {
                 // TODO avoid copies
                 &Cow::Borrowed(ref x) => { string += x.clone(); },
-                &Cow::Owned(ref x) => { string += &x.clone()[..] }
+                &Cow::Owned(ref x) => { string += &x.clone()[..] },
+                _ => { has = false }
             }
         });
-        string
+        if has { Some(string) } else { None }
     }
 
     pub fn to_leaf(self, lists_allowed: bool) -> Leaf<'s> {
@@ -250,25 +259,19 @@ impl<'s> Rope<'s> {
             Rope::Leaf(Chr(_))
             | Rope::Nil => { panic!() },
             Rope::Node(_, _) => {
+                // TODO think this through a bit more..
                 if !self.is_white() {
-                    Leaf::Own(Box::new(Value::Str(self.to_str())))
+                    Leaf::Own(Box::new(Value::Str( self.to_str().unwrap() )))
                 } else {
-                    let mut vals = self.values();
-                    match vals.len() {
-                        0 => {
-                            panic!() // TODO fix
-                            //Leaf::Own(Box::new(Value::Str(self.to_str())))
-                        },
+                    match self.values_cnt() {
                         1 => {
-                            Leaf::Own(Box::from(vals.remove(0)))
+                            Leaf::Own(Box::from( self.values().remove(0) ))
                         },
                         _ => {
-                            if lists_allowed {
-                                Leaf::Own(Box::from(Value::OwnedList(
-                                    vals
-                                )))
+                            if let Some(s) = self.to_str() {
+                                Leaf::Own(Box::new(Value::Str( s )))
                             } else {
-                                panic!("Cannot create implicit lists in macro return values");
+                                 panic!("Cannot make sense!");
                             }
                         }
                     }
@@ -280,14 +283,15 @@ impl<'s> Rope<'s> {
     pub fn split_at<'q, F : FnMut(char) -> bool>
         (&mut self, match_val : bool, matcher: &mut F)
         -> Option<Rope<'s>>  {
+        println!("SHIELD {:?}", self);
         let mut out : Option<Rope<'s>> = None;
         let mut make_nil = false;
         match self {
-            &mut Rope::Nil => { },
+            &mut Rope::Nil => { println!("THORAX"); },
             &mut Rope::Node(ref mut left, ref mut right) => {
                 match left.split_at(match_val, matcher) {
                     Some(result) => {
-                        return Some(result);
+                        out = Some(result);
                     }
                     None => {
                         match right.split_at(match_val, matcher) {
@@ -307,12 +311,14 @@ impl<'s> Rope<'s> {
                 if match_val {
                 } else {
                     // todo fix this
+                    println!("LORAX");
                     out = Some(replace(self, Rope::Nil))
                 }
             },
             &mut Rope::Leaf(Leaf::Own(ref v)) => {
                 if match_val {
                 } else {
+                    println!("ATOWN {:?}", v);
                     out = Some(Rope::Leaf(Leaf::Own( Box::new( v.make_static() ))) );
                     make_nil = true;
                 }
@@ -321,6 +327,7 @@ impl<'s> Rope<'s> {
                 if let Some(idx) = cow.find(|x| { matcher(x) }) {
                     let ncow = {
                         let pair = cow.split_at(idx);
+                        println!("AT: {:?}", pair);
                     // TODO copying here
                         out = Some(Rope::Leaf(Leaf::Chr(Cow::Owned(pair.0.to_owned()))).make_static());
                         Cow::Owned(pair.1.to_owned())
@@ -332,6 +339,7 @@ impl<'s> Rope<'s> {
         if make_nil {
             *self = Rope::Nil
         }
+        println!("YIELD {:?} {:?}", out, self);
         out
     }
 /*
@@ -358,14 +366,17 @@ impl<'s> Rope<'s> {
 
     pub fn split_char(&mut self) -> Option<char> {
 
-        match self {
+        let res = match self {
             &mut Rope::Nil => { None },
             &mut Rope::Node(ref mut left, ref mut right) => {
                 left.split_char().or_else(|| { right.split_char() })
             },
             &mut Rope::Leaf(Leaf::Chr(Cow::Owned(ref mut ch))) => {
                 if ch.len() > 0 {
-                    Some(ch.remove(0))
+                    let rest = ch.split_off(1);
+                    let out = ch.remove(0);
+                    *ch = rest;
+                    Some(out)
                 } else {
                     None
                 }
@@ -380,7 +391,9 @@ impl<'s> Rope<'s> {
                 }
             }
             &mut Rope::Leaf(_) => { panic!("Unexpected value!") }, 
-        }
+        };
+        println!("SPLIT OFF {:?} {:?}", res, self);
+        res
     }
 }
 
@@ -407,6 +420,7 @@ impl fmt::Debug for ValueList {
         Ok(())
     }
 }
+*/
 impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
@@ -417,15 +431,14 @@ impl fmt::Debug for ValueClosure {
             k.fmt(f)?;
         }
         write!(f, "]CODE<");
-        first = true;
-        for item in x.atomize() {
-            if first { first = false; } else { write!(f, "|")?; }
-            item.fmt(f)?;
-        }
+        x.walk(|i| {
+            i.fmt(f);
+        });
         write!(f, ">")?;
         Ok(())
     }
 }
+/*
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
