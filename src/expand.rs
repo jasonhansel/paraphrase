@@ -70,12 +70,12 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope>) -> Rope<'s> {
         Instr::Call(cnt, cmd) => {
             let idx = stack.len() - cnt as usize;
             let args = stack.drain(idx..)
-                .map(|x| { x.to_leaf(scope.clone()) })
+                .map(|x| { x.coerce_bubble(scope.clone()) })
                 .collect::<Vec<_>>();
             // TODO: currently there are lots of nested eval() calls when working with closures --
             // e.g. with *macro definitions*
             let result = eval(scope.clone(), cmd, args);
-            stack.push( Rope::Leaf( result ) );
+            stack.push( Rope::Leaf( Leaf::Own( Box::new(result ) ) ));
         }
 
     } }
@@ -149,7 +149,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
             let file = self.instr.split_off(idx);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
-            let result = do_expand(file, scope.clone()).get_leaf();
+            let result = do_expand(file, scope.clone()).coerce();
             if let Some(bubble) = result.bubble_move(scope) {
                 return bubble
             } else {
@@ -342,8 +342,8 @@ impl<'s> Value<'s> {
 
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
+pub fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Value<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
-    expander.do_expand(scope.clone()).to_leaf(scope.clone())
+    expander.do_expand(scope.clone()).coerce_bubble(scope.clone())
 }

@@ -4,20 +4,20 @@ use expand::*;
 use std::rc::Rc;
 use std::borrow::Cow;
 
-fn get_args<'s>(args: Vec<Leaf<'s>>) -> (Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>) {
-    let mut it = args.into_iter().fuse().map(|x| { x.as_val() });
+fn get_args<'s>(args: Vec<Value<'s>>) -> (Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>) {
+    let mut it = args.into_iter();
     (
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
-        it.next().and_then(|x|{x}),
+        it.next(),
+        it.next(),
+        it.next(),
+        it.next(),
+        it.next(),
+        it.next(),
+        it.next(),
     )
 }
 
-fn change_char<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn change_char<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, h))), None, ..) => {
             let needle = n.chars().next().unwrap();
@@ -30,17 +30,17 @@ fn change_char<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
                     Rope::Leaf(Leaf::Chr(Cow::Owned(replacement.into_owned())))
                 ).concat(rest).make_static() )
             );
-            Leaf::Own(Box::new(Value::Bubble(new_closure)))
+            ((Value::Bubble(new_closure)))
         },
         _ => { panic!() }
     }
 }
 
-fn if_eq<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn if_eq<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
             let todo = if value_a == value_b { if_true } else { if_false };
-            Leaf::Own(Box::new(Bubble(todo.force_clone()))) 
+            ((Bubble(todo.force_clone()))) 
         },
         _ => {panic!()}
     }
@@ -49,39 +49,35 @@ fn if_eq<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
 
 // FIXME: not working yet??
 
-fn if_eq_then<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> { 
+fn if_eq_then<'s>(args: Vec<Value<'s>>) -> Value<'s> { 
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
-
             let todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
-
-            let rv = Leaf::Own(Box::new(Bubble(
+            Bubble(
                 ValueClosure(finally.0.clone(), Box::new(Rope::Node(todo, finally.force_clone().1)))
-            )));
-
-            rv
+            )
         },
         _ => {panic!()}
     }
 }
 
-fn bubble<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn bubble<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Closure(closure)), None, ..) => {
-            Leaf::Own(Box::new(Bubble(closure.force_clone())))
+            ((Bubble(closure.force_clone())))
         },
         _ => panic!()
     }
 }
 
-fn end_paren<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
-    Leaf::Own(Box::new(Value::Str(Cow::from(")".to_owned()))))
+fn end_paren<'s>(args: Vec<Value<'s>>) -> Value<'s> {
+    ((Value::Str(Cow::from(")".to_owned()))))
 }
 
-fn literal<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn literal<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
-            Leaf::Own(Box::new(Value::Str( Cow::Owned( closure.to_str().unwrap().into_owned()  ))) )
+            ((Value::Str( Cow::Owned( closure.to_str().unwrap().into_owned()  ))) )
         },
         _ => { panic!() }
     }
@@ -90,7 +86,7 @@ fn literal<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
 // NOTE: can't define inside of parentheses (intentonally -- I think this is the only sensible
 // opton if we want to allow parallelism -- can this be changed?)
 
-fn define<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
@@ -124,7 +120,7 @@ fn define<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn expand<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn expand<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
             new_expand(scope.clone(), contents.make_static() ).make_static()
@@ -133,13 +129,11 @@ fn expand<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn rescope<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn rescope<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
     (Some(Closure(ValueClosure(inner_scope, _))),
     Some(Closure(ValueClosure(_, contents))),None,..) => {
-        Leaf::Own(Box::from(
-             Closure(ValueClosure(inner_scope.clone(), Box::new(contents.make_static() )))
-        ))
+         Closure(ValueClosure(inner_scope.clone(), Box::new(contents.make_static() )))
     },
     _ => {panic!() }
     }

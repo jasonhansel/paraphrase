@@ -111,10 +111,9 @@ pub enum Rope<'s> {
 
 use std::ptr;
 
-impl<'s> Leaf<'s> {
+impl<'s> Value<'s> {
     pub fn bubble(&self, scope: Rc<Scope>) -> Option<&Rope<'s>> {
-        if let &Leaf::Own(ref v) = self {
-            if let &Value::Bubble(ref closure) = &**v {
+            if let &Value::Bubble(ref closure) = self {
                 let &ValueClosure(ref inner_scope, ref contents) = closure;
                 if Rc::ptr_eq(&inner_scope, &scope) {
                     return Some(&**contents)
@@ -122,13 +121,10 @@ impl<'s> Leaf<'s> {
                     panic!("SAD BUBBLING"); // just a test
                 }
             }
-        }
         return None
     }
- 
     pub fn bubble_move(self, scope: Rc<Scope>) -> Option<Rope<'s>> {
-        if let Leaf::Own(v) = self {
-            if let Value::Bubble(closure) = *v {
+            if let Value::Bubble(closure) = self {
                 let ValueClosure(inner_scope, contents) = closure;
                 if Rc::ptr_eq(&inner_scope, &scope) {
                     return Some(*contents)
@@ -136,22 +132,23 @@ impl<'s> Leaf<'s> {
                     panic!("SAD BUBBLING"); // just a test
                 }
             }
-        }
         return None
     }
 
+    pub fn to_str(&self) -> Option<&Cow<'s, str>> {
+        match self {
+            &Value::Str(ref v) => { Some(v) },
+            _ => { None }
+        }
+    }
+}
+impl<'s> Leaf<'s> {
 
     pub fn to_str(&self) -> Option<&Cow<'s, str>> {
         // TODO: may need to handle Bubbles here
         match self {
             &Leaf::Chr(ref c) => { Some(c) },
-
-            &Leaf::Own(ref v) => {
-                match &**v {
-                    &Value::Str(ref v) => { Some(v) },
-                    _ => None
-                }
-            },
+            &Leaf::Own(ref v) => { v.to_str() },
             _ => None
         }
     }
@@ -204,18 +201,18 @@ impl<'s> Rope<'s> {
     pub fn debubble<'t>(&mut self, scope: Rc<Scope>) {
         match self {
             &mut Rope::Leaf(ref mut l) => {
-                let mut new_l = None;
                 if let &mut Leaf::Own(ref mut v) = l {
+                    let mut new_l = None;
                     if let &Value::Bubble(ref closure) = &**v {
                         let ValueClosure(inner_scope, contents) = closure.force_clone();
                         if Rc::ptr_eq(&inner_scope, &scope) {
-                            new_l = Some(new_expand(scope, *contents ))
+                            new_l = Some(Box::new(new_expand(scope, *contents )))
                         } else {
                             panic!("SAD BUBBLING"); // just a test
                         }
                     }
+                    if let Some(n) = new_l { replace(v, n); }
                 }
-                if let Some(n) = new_l { replace(l, n); }
             },
             &mut Rope::Node(ref mut l, ref mut r) => {
                 l.debubble(scope.clone());
@@ -304,34 +301,34 @@ impl<'s> Rope<'s> {
         if has { Some(string) } else { None }
     }
 
-    pub fn to_leaf(mut self, scope: Rc<Scope>) -> Leaf<'s> {
+    pub fn coerce_bubble(mut self, scope: Rc<Scope>) -> Value<'s> {
         self.debubble(scope);
-        self.get_leaf()
+        self.coerce()
     }
 
-    pub fn get_leaf(self) -> Leaf<'s> {
+    pub fn coerce(self) -> Value<'s> {
         match self {
             Rope::Nil => { panic!() }
-            Rope::Leaf(Own(l)) => { return Own(l) }
-            Rope::Leaf(Chr(c)) => { return Own(Box::new( Value::Str( Cow::Owned( c.clone().into_owned() ) ))) }
+            Rope::Leaf(Own(l)) => { return *l }
+            Rope::Leaf(Chr(c)) => { return Value::Str(c) }
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
                 if !self.is_white() {
-                    Leaf::Own(Box::new(Value::Str( self.to_str().unwrap() )))
+                    Value::Str( self.to_str().unwrap() )
                 } else {
                     match self.values_cnt() {
                         1 => {
                             let mut val = None;
                             self.move_walk(|leaf| { match leaf {
                                 Chr(_) => { true },
-                                Own(v) => { val = Some(Leaf::Own(v)); false }
+                                Own(v) => { val = Some(*v); false }
                             } });
                             val.unwrap()
                         },
                         _ => {
                             if let Some(s) = self.to_str() {
                                 println!("BUILT {:?}", s);
-                                Leaf::Own(Box::new(Value::Str( s )))
+                                Value::Str( s )
                             } else {
                                  panic!("Cannot make sense of: {:?}", self);
                             }

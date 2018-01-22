@@ -8,7 +8,7 @@ use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
 
 pub enum Command {
-    Native(Box<for<'s> fn(Vec<Leaf<'s>>) -> Leaf<'s>>),
+    Native(Box<for<'s> fn(Vec<Value<'s>>) -> Value<'s>>),
     InOther(Rc<Scope>),
     User(Vec<String>, Rope<'static>)
 }
@@ -59,7 +59,7 @@ impl Scope {
     }
 
     pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
-        for<'s> fn(Vec<Leaf<'s>>) -> Leaf<'s>
+        for<'s> fn(Vec<Value<'s>>) -> Value<'s>
     ) {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
@@ -92,13 +92,13 @@ pub fn dup_scope(scope : &Rc<Scope>) -> Scope {
     stat
 }
 
-pub fn eval<'c, 'v>(cmd_scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<Leaf<'v>>) -> Leaf<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
     match cmd_scope.commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
-             code(args )
+             code(args)
          },
          &Command::User(ref arg_names, ref contents) => {
              // todo handle args
@@ -107,18 +107,13 @@ pub fn eval<'c, 'v>(cmd_scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<L
              if arg_names.len() != args.len() {
                  panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
              }
+             let mut new_scope = Rc::new(new_scope);
              for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                new_scope.commands
-                     .insert(vec![Ident(name.to_owned() )],
-                     Command::User( vec![],
-                        Rope::Leaf(arg.make_static())
-                    )
-                 );
+                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], &Rope::Leaf(Leaf::Own(Box::new(arg))));
              }
-             let new_scope = Rc::new(new_scope);
              let out = new_expand(new_scope, contents.make_static() );
              println!("OUTP {:?} {:?}", out, contents);
              out.make_static()
