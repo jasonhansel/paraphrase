@@ -71,7 +71,12 @@ fn bubble<'s>(args: Vec<Value<'s>>) -> Value<'s> {
 }
 
 fn end_paren<'s>(args: Vec<Value<'s>>) -> Value<'s> {
-    ((Value::Str(Cow::from(")".to_owned()))))
+    match get_args(args) {
+        (None, ..) => {
+            ((Value::Str(Cow::from(")".to_owned()))))
+        },
+        _ => panic!()
+    }
 }
 
 fn literal<'s>(args: Vec<Value<'s>>) -> Value<'s> {
@@ -110,7 +115,7 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
             // make_mut clones as nec.
             let mut new_scope = Rc::new(dup_scope(&scope));
             Scope::add_user(&mut new_scope, parts, params, &*closure_data);
-            // TODO avoid clone here
+            // TODO avoid recursion
             new_expand(new_scope, *to_expand)
         },
         _ => {

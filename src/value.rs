@@ -172,12 +172,15 @@ impl<'s> Rope<'s> {
     }
 
     pub fn is_white(&self) -> bool {
-        match self {
-           &Rope::Nil => { true }
-           &Rope::Node(ref l, ref r) => { l.is_white() && r.is_white() }
-           &Rope::Leaf(Leaf::Chr(ref c)) =>  { c.chars().all(|x| { x.is_whitespace() }) }
-           &Rope::Leaf(Leaf::Own(_)) => { true }
-        }
+        let mut result = true;
+        self.walk(|v| {
+            match v {
+                &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { result = false } }
+                _ => {}
+            }
+            result
+        });
+        result
     }
 
     // use wlak more
@@ -259,12 +262,7 @@ impl<'s> Rope<'s> {
                             val.unwrap()
                         },
                         _ => {
-                            if let Some(s) = self.to_str() {
-                                println!("BUILT {:?}", s);
-                                Value::Str( s )
-                            } else {
-                                 panic!("Cannot make sense of: {:?}", self);
-                            }
+                            Value::Str( self.to_str().unwrap() )
                         }
                     }
                 }
