@@ -33,6 +33,7 @@ pub enum Value<'s> {
     Closure(ValueClosure<'s>),
     Bubble(ValueClosure<'s>) // <- gets auto-expanded when it reaches its original scope
 }
+use Value::*;
 
 impl<'s> PartialEq for Value<'s> {
     fn eq(&self, other: &Value<'s>) -> bool {
@@ -46,7 +47,6 @@ impl<'s> PartialEq for Value<'s> {
     }
 }
 
-pub use Value::*;
 
 
 /* UNBALANCED, BORROWED rope data structure
@@ -409,26 +409,6 @@ impl<'s> Rope<'s> {
 
 
 
-pub use Value::*;
-/*
-impl fmt::Debug for ValueList {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &ValueList(ref x) => { 
-                write!(f, "List<")?;
-                let mut first = true;
-                for item in x.iter() {
-                    if first { first = false; } else { write!(f, "|")?; }
-                    item.fmt(f)?;
-                }
-                write!(f, ">")?;
-
-            }
-        }
-        Ok(())
-    }
-}
-*/
 impl<'s> fmt::Debug for ValueClosure<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
@@ -441,42 +421,4 @@ impl<'s> fmt::Debug for ValueClosure<'s> {
         Ok(())
     }
 }
-/*
-impl fmt::Debug for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Char(ValueChar(x)) => { write!(f, "{}",x)?; },
-            &List(ref x) => { x.fmt(f)?; },
-            &Closure(ref x) => { x.fmt(f)?; },
-            &Tagged(ref tag, ValueList(ref x)) => {
-                write!(f,"[");
-                tag.fmt(f)?; 
-                write!(f,"]<")?;
-                let mut first = true;
 
-                for item in x.iter() {
-                    if first { first = false; } else { write!(f, "|")?; }
-                    item.fmt(f)?;
-                }
-                write!(f, ">")?;
-            },
-       }
-        Ok(())
-    }
-}
-impl PartialEq for Value {
-    fn eq(&self, other: &Value) -> bool {
-        match (self, other) {
-            (&Str(ref a), &Str(ref b)) => { a == b },
-            (&List(ref a), &List(ref b)) => { a == b },
-            (&Tagged(ref at, ref ad), &Tagged(ref bt, ref bd)) => {
-                at == bt && ad == bd
-            },
-            (&Closure(_), _)
-            | (_, &Closure(_)) => { panic!("Cannot compare closures!"); },
-            (_, _) => false
-        }
-    }
-
-}
-*/

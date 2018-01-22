@@ -326,15 +326,6 @@ fn parse<'f, 'r, 's : 'r>(
     visitor.done()
 }
 
-impl<'s> Value<'s> {
-    fn to_string(&self) -> Cow<'s, str> {
-        match self {
-            &Str(ref x) => x.clone(),
-            &Tagged(_, ref x) => x.to_string(),
-            _ => {panic!("Cannot coerce value into string!")}
-        }
-    }
-}
 // TODO: make sure user can define their own bubble-related fns.
 
 

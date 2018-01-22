@@ -1,6 +1,7 @@
 use scope::*;
 use value::*;
 use expand::*;
+use value::Value::*;
 use std::rc::Rc;
 use std::borrow::Cow;
 
