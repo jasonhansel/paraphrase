@@ -118,7 +118,6 @@ pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, ar
              }
 
              let out = new_expand(new_scope, contents.dupe()).make_static();
-             println!("OUTP {:?} {:?}", out, contents);
              out
          }
      }

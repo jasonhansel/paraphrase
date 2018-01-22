@@ -127,7 +127,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         let mut idx = self.instr.len() - 1;
         let mut level = 1;
 
-        while idx >= 0  {
+        loop {
             if let Instr::StartCmd = self.instr[idx] {
                 level -= 1;
                 if level == 0 { break; }
@@ -142,9 +142,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         self.instr.push(Instr::Call(self.calls.pop().unwrap() + 1, parts));
 
 
-        if idx < 0 {
-            panic!("Semi param outside of any command");
-        } else if self.calls.len() > 0 {
+        if self.calls.len() > 0 {
             let file = self.instr.split_off(idx);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
@@ -222,9 +220,7 @@ fn parse<'f, 'r, 's : 'r>(
                 }
 
             } else {
-            println!("PREPARING {:?} {:?} {:?}", parts, rope, scope);
                 let (r, _) = rope.split_at(false, &mut |ch : char| {
-                    println!("SCANW {:?}", ch);
                     if ch.is_whitespace() {
                         return false;
                     } else {
@@ -243,7 +239,6 @@ fn parse<'f, 'r, 's : 'r>(
                     parts.push(Param);
                     stack.push(ParseEntry::Command(parts));
                 } else if chr == ';' {
-                    println!("HIT SEMI");
                     parts.push(Param);
                     // TODO get this working better
                     if !scope.has_command(&parts) {
@@ -272,9 +267,8 @@ fn parse<'f, 'r, 's : 'r>(
             }
         },
         ParseEntry::Text(mut paren_level, in_call) => {
-            let mut pos = 0;
+            // TODO make more things (e.g. sigil character) customizable
             let (r, prefix) = rope.split_at(true, &mut |x| { 
-                
                 println!("SCAN {:?}", x);
                 match x{
                     '(' => {
@@ -286,7 +280,6 @@ fn parse<'f, 'r, 's : 'r>(
                             paren_level -= 1;
                             false
                         } else if in_call {
-                            println!("HAEC");
                             true
                         } else {
                             false
@@ -294,7 +287,6 @@ fn parse<'f, 'r, 's : 'r>(
                     }
                     chr => { 
                         if chr == (scope.sigil) {
-                            println!("HOC");
                             true
                         } else {
                             false
@@ -314,7 +306,6 @@ fn parse<'f, 'r, 's : 'r>(
                         stack.push(ParseEntry::Command(vec![]));
                     },
                     None => {
-                        println!("TEST");
                     }
                 }
             } else {

@@ -89,6 +89,7 @@ impl<'s,'t> Value<'s> {
             Bubble(c) => { Bubble(c.force_clone()) },
         }
     }
+// TODO allow multipart macros again?
     fn dupe(&self) -> Value<'s> {
         match self {
             // FIXME: Cow::Owned will cause excessive copying later
@@ -182,7 +183,6 @@ impl<'s> Leaf<'s> {
         match self {
             &Leaf::Chr(ref c) => { Some(c) },
             &Leaf::Own(ref v) => { v.to_str() },
-            _ => None
         }
     }
     pub fn as_val(self) -> Option<Value<'s>> {

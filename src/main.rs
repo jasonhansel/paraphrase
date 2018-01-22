@@ -37,22 +37,20 @@ fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Err
     std::io::stdout().flush().unwrap();
     let mut file = File::open(path)?;
     file.read_to_string(string)?;
-    // TODO use Borrowed always
     Ok(Rope::from_str(Cow::Borrowed(&string[..])))
 }
 
 #[test]
 fn it_works() {
+    // TODO: organize a real test suite
     let mut s = String::new();
     let mut chars = read_file(&mut s, "tests/1-simple.pp").unwrap();
     let scope = Rc::new(default_scope());
     let results = new_expand(scope, chars);
     println!("||\n{}||", results.to_str().unwrap());
-    // ISSUE: extra whitespace at end of output
- //   assert_eq!(out, "Hello world!\n");
 }
 
 fn main() {
-    // TODO cli
+    // TODO add a CLI
     println!("Hello, world!");
 }
