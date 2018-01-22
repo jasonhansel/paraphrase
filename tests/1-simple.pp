@@ -15,9 +15,8 @@ Hello world :(
 
 Hello new world order = #change_char(@)(#literal{#}){@h} #w
 
-Hello world :) =
+world world :) =
 #change_char(@)(#literal{#});
-
 @z(
   #change_char(@)(#end_paren);
   world
