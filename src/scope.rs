@@ -67,7 +67,7 @@ impl<'c> Scope<'c> {
 
     pub fn add_user<'s>(mut this: &mut Rc<Scope>, parts: Vec<CommandPart>,
                         params: Vec<String>,
-                        rope: &Rope<'s>) {
+                        rope: Rope<'s>) {
         Rc::get_mut(&mut this).unwrap()
             .commands
             .insert(parts, Command::User(params, rope.make_static()));
@@ -93,52 +93,6 @@ pub fn dup_scope<'s>(scope : &Rc<Scope<'static>>) -> Scope<'static> {
     stat
 }
 
-impl<'s> ValueClosure<'s> {
-    pub fn force_clone(&self) -> ValueClosure<'static> {
-        match self {
-           &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
-        }
-    }
-}
-impl<'s,'t> Value<'s> {
-    fn make_static(&'t self) -> Value<'static> {
-        match self {
-            // FIXME: Cow::Owned will cause excessive copying later
-            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
-            &List(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
-            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
-            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.make_static())) },
-            &Closure(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
-            &Bubble(ValueClosure(ref sc, ref ro)) => { Bubble(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
-        }
-    }
-}
-
-impl<'s> Leaf<'s> {
-    fn make_static(&self) -> Leaf<'static> { match self {
-        // TODO avoid this at all costs
-        &Leaf::Chr(ref c) => {
-            let owned = Cow::Owned(c.clone().into_owned());
-            Leaf::Chr(owned)
-        },
-        &Leaf::Own(ref v) => { Leaf::Own( Box::new( v.make_static() ))  }
-    } }
-}
-
-impl<'s> Rope<'s> {
-    fn make_static(&self) -> Rope<'static> {
-        match self {
-            &Rope::Nil => { Rope::Nil },
-            &Rope::Node(ref l, ref r) => {
-                Rope::Node(
-                    Box::new(l.make_static()),
-                    Box::new(r.make_static())
-                )
-            },
-            &Rope::Leaf(ref l) => { Rope::Leaf(l.make_static()) }
-        }
-    }
-}
 
 pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
     match cmd_scope.commands.get(&command).unwrap() {
@@ -160,11 +114,12 @@ pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, ar
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], &Rope::Leaf(Leaf::Own(Box::new(arg))));
+                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg));
              }
-             let out = new_expand(new_scope, contents.make_static() );
+
+             let out = new_expand(new_scope, contents.dupe().make_static());
              println!("OUTP {:?} {:?}", out, contents);
-             out.make_static()
+             out
          }
      }
 }

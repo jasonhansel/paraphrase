@@ -58,13 +58,12 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope<'static>>) -> Rope<'s> {
             );
         },
         Instr::Close(r) => {
-            println!("CLOSING {:?}", r);
             let stat = r;
+            let v = 
+            Rope::from_value(  Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ) ;
+            println!("CLOSING {:?}", v);
             stack.push(
-                Rope::Leaf( Leaf::Own(
-                        Box::new(
-                            Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ))
-                    )
+                v
             );
         }
         Instr::Call(cnt, cmd) => {
@@ -75,7 +74,7 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope<'static>>) -> Rope<'s> {
             // TODO: currently there are lots of nested eval() calls when working with closures --
             // e.g. with *macro definitions*
             let result = eval(scope.clone(), cmd, args);
-            stack.push( Rope::Leaf( Leaf::Own( Box::new(result ) ) ));
+            stack.push( Rope::from_value(result));
         }
 
     } }

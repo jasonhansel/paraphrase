@@ -5,6 +5,8 @@ use scope::Scope;
 use std::borrow::Cow;
 use std::mem::replace;
 use expand::*;
+use std::collections::LinkedList;
+use std::iter;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
@@ -53,18 +55,91 @@ pub use Value::*;
 
 #[derive(Debug)]
 pub enum Leaf<'s> {
-    Own(Box<Value<'s>>),
+    Own(Value<'s>),
     Chr(Cow<'s, str>)
 }
 
 use Leaf::*;
 
 #[derive(Debug)]
-pub enum Rope<'s> {
-    Node(Box<Rope<'s>>, Box<Rope<'s>>),
-    Leaf(Leaf<'s>),
-    Nil
+pub struct Rope<'s> {
+    data: LinkedList<Leaf<'s>>
 }
+impl<'s> ValueClosure<'s> {
+    pub fn force_clone(self) -> ValueClosure<'static> {
+        match self {
+           ValueClosure(sc, ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
+        }
+    }
+    pub fn force_dupe(&self) -> ValueClosure<'s> {
+        match self {
+           &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.dupe().make_static() )) },
+        }
+    }
+}
+impl<'s,'t> Value<'s> {
+    fn make_static(self) -> Value<'static> {
+        match self {
+            // FIXME: Cow::Owned will cause excessive copying later
+            Str(s) => { Str(Cow::Owned(s.clone().into_owned())) },
+            List(l) => { panic!() } // FIXME OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
+            OwnedList(l) => { OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
+            Tagged(t, v) => { Tagged(t, Box::new(v.make_static())) },
+            Closure(c) => { Closure(c.force_clone()) },
+            Bubble(c) => { Bubble(c.force_clone()) },
+        }
+    }
+    fn dupe(&self) -> Value<'s> {
+        match self {
+            // FIXME: Cow::Owned will cause excessive copying later
+            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
+            &List(ref l) => { panic!() } // FIXME OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
+            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.dupe() }).collect()) },
+            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.dupe())) },
+            &Closure(ref c) => { Closure(c.force_dupe()) },
+            &Bubble(ref c) => { Bubble(c.force_dupe()) },
+        }
+    }
+}
+
+impl<'s> Leaf<'s> {
+fn make_static(self) -> Leaf<'static> { match self {
+    // TODO avoid this at all costs
+    Leaf::Chr(c) => {
+        let owned = Cow::Owned(c.clone().into_owned());
+        Leaf::Chr(owned)
+    },
+    Leaf::Own(v) => { Leaf::Own( v.make_static() )  }
+} }
+    fn dupe(&'s self) -> Leaf<'s> { match self {
+        // TODO avoid this at all costs
+        &Leaf::Chr(Cow::Borrowed(ref c)) => {
+            Leaf::Chr(Cow::Borrowed( &**c ))
+        },
+        &Leaf::Chr(Cow::Owned(ref c)) => {
+            Leaf::Chr(Cow::Owned(c.clone()))
+        },
+        &Leaf::Own(ref v) => { Leaf::Own( v.dupe() )  }
+    } }
+}
+
+impl<'s> Rope<'s> {
+    pub fn make_static(self) -> Rope<'static> {
+        let mut new_rope = Rope::new();
+        for item in self.data.into_iter() {
+            new_rope.data.push_back( item.make_static() );
+        }
+        new_rope
+    }
+    pub fn dupe(&'s self) -> Rope<'s> {
+        let mut new_rope = Rope::new();
+        for item in self.data.iter() {
+            new_rope.data.push_back( item.dupe() );
+        }
+        new_rope
+    }
+}
+
 
 
 use std::ptr;
@@ -113,7 +188,7 @@ impl<'s> Leaf<'s> {
     pub fn as_val(self) -> Option<Value<'s>> {
         match self {
             Leaf::Chr(_) => { None  },
-            Leaf::Own(v) => { Some(*v) }
+            Leaf::Own(v) => { Some(v) }
         }
     }
 
@@ -128,237 +203,206 @@ impl<'s> Leaf<'s> {
 
 impl<'s> Rope<'s> {
     pub fn new() -> Rope<'s> {
-        return Rope::Nil
+        return Rope { data: LinkedList::new() } 
     }
 
     pub fn from_value(value: Value<'s>) -> Rope<'s> {
-        Rope::Leaf(Leaf::Own(Box::new(value)))
+        Rope { data: iter::once(Leaf::Own(value)).collect() }
     }
     pub fn from_str(value: Cow<'s, str>) -> Rope<'s> {
-        Rope::Leaf(Leaf::Chr(value))
+        Rope { data: iter::once(Leaf::Chr(value)).collect() }
     }
     pub fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
-        self.walk_mut(|leaf| {
+        for leaf in self.data.iter_mut() {
              if let &mut Leaf::Own(ref mut v) = leaf {
-                let mut new_l = None;
-                if let &Value::Bubble(ref closure) = &**v {
+                let value = replace(v, Value::Str(Cow::from("")));
+                if let Bubble(closure) = value {
                     let ValueClosure(inner_scope, contents) = closure.force_clone();
                     if Rc::ptr_eq(&inner_scope, &scope) {
-                        new_l = Some(Box::new(new_expand(scope.clone(), *contents )))
+                        replace(v, new_expand(scope.clone(), *contents ));
                     } else {
                         panic!("SAD BUBBLING"); // just a test
                     }
+                } else {
+                    replace(v, value);
                 }
-                if let Some(n) = new_l { replace(v, n); }
             }
-            true
-        });
+        }
     }
 
-    pub fn concat(self, other: Rope<'s>) -> Rope<'s> {
-        Rope::Node(Box::new(self), Box::new(other))
+    pub fn concat(mut self, mut other: Rope<'s>) -> Rope<'s> {
+        return Rope {
+            data: {
+                let mut l = LinkedList::new();
+                l.append(&mut self.data);
+                l.append(&mut other.data);
+                l
+            }
+        }
     }
 
     fn is_empty(&self) -> bool {
-         match self {
-            &Rope::Nil => { true }
-
-            &Rope::Node(ref l, ref r) => { l.is_empty() && r.is_empty() }
-            &Rope::Leaf(Leaf::Chr(ref c)) => { c.len() == 0 }
-            &Rope::Leaf(Leaf::Own(_)) => { false }
+        for leaf in self.data.iter() {
+            match leaf {
+                &Chr(ref c) => { if c.len() != 0 { return false } },
+                &Own(_) => { return false }
+            }
         }
+        return true
     }
 
 
     // use wlak more
 
-    fn is_single_value(&self) -> bool {
+    fn should_be_string(&self) -> bool {
         let mut white = true;
         let mut count = 0;
-        self.walk(|leaf| { match leaf {
-            &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { white = false } }
-            &Own(_) => { count += 1 }
-        }; !( !white || count > 1 ) });
-        white && count == 1
+        println!("CHECKING {:?}", self);
+        for leaf in self.data.iter() {
+            match leaf {
+                &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { println!("NW"); return true } }
+                &Own(_) => { count += 1 }
+            }
+ //           if count > 1 { return true }
+        }
+        println!("CNT {:?}", count);
+        return (count != 1)
     }
 
-    fn move_walk<F : FnMut(Leaf<'s>) -> bool> (self, mut todo: F) {
-        let mut stack : Vec<Rope<'s>> = vec![
-            self
-        ];
-        while let Some(top) = stack.pop() { match top {
-            Rope::Nil => { }
-            Rope::Node(l, r) => {
-                stack.push(*r);
-                stack.push(*l);
-            }
-            Rope::Leaf(l) => { if !todo(l) { return } }
-        } }
-    }
-    fn walk_mut<F : FnMut(&mut Leaf<'s>) -> bool> (&mut self, mut todo: F) {
-        let mut stack : Vec<&mut Rope<'s>> = vec![
-            self
-        ];
-        while let Some(top) = stack.pop() { match top {
-            &mut Rope::Nil => { }
-            &mut Rope::Node(ref mut l, ref mut r) => {
-                stack.push(r);
-                stack.push(l);
-            }
-            &mut Rope::Leaf(ref mut l) => { if !todo(l) { return } }
-        } }
-    }
-
-
-    fn walk<F : FnMut(&Leaf<'s>) -> bool> (&self, mut todo: F) {
-        let mut stack : Vec<&Rope<'s>> = vec![
-            &self
-        ];
-        while let Some(top) = stack.pop() { match top {
-            &Rope::Nil => { }
-            &Rope::Node(ref l, ref r) => {
-                stack.push(r);
-                stack.push(l);
-            }
-            &Rope::Leaf(ref l) => { if !todo(l) { return } }
-        } }
-    }
 
     pub fn to_str(&self) -> Option<Cow<'s, str>> {
         let mut has = true;
         let mut string : Cow<'s, str> = Cow::from("");
-        self.walk(|v|{
-            println!("TRYCONC {:?}", v.to_str());
+        println!("STRINGIFYING {:?}", self);
+        for v in self.data.iter() {
             match v.to_str() {
                 // TODO avoid copies
                 Some(&Cow::Borrowed(ref x)) => { string += x.clone(); },
                 // for some reason, adding the string below doesn't work
                 Some(&Cow::Owned(ref x)) => { string.to_mut().push_str(&x[..]) },
-                _ => { has = false }
+                None => { return None }
             }
-            true
-        });
-        if has { Some(string) } else { None }
+        }
+        Some(string)
     }
 
     pub fn coerce_bubble(mut self, scope: Rc<Scope<'static>>) -> Value<'s> {
+        println!("DEBUBBLE {:?}", self);
         self.debubble(scope);
+        println!("DEBUBBLED {:?}", self);
         self.coerce()
     }
 
     pub fn coerce(self) -> Value<'s> {
-        match self {
-            Rope::Nil => { panic!() }
-            Rope::Leaf(Own(l)) => { return *l }
-            Rope::Leaf(Chr(c)) => { return Value::Str(c) }
-            Rope::Node(_, _) => {
-                if !self.is_single_value() {
-                    Value::Str( self.to_str().unwrap() )
-                } else {
-                    let mut val = None;
-                    self.move_walk(|leaf| { match leaf {
-                        Chr(_) => { true },
-                        Own(v) => { val = Some(*v); false }
-                    } });
-                    val.unwrap()
-               }
-            }
-        }
+       if self.should_be_string() {
+           println!("CHECKING {:?}", &self);
+            Value::Str( self.to_str().unwrap() )
+        } else {
+            for val in self.data.into_iter() { match val {
+                Chr(_) => { },
+                Own(v) => { return v }
+            } }
+            panic!("Failure");
+       }
     }
         // may want to make this stuff iterative
-    pub fn split_at<F : FnMut(char) -> bool>(self, match_val : bool, matcher: &mut F)
+    pub fn split_at<F : FnMut(char) -> bool>(mut self, match_val : bool, matcher: &mut F)
         -> (Rope<'s>, Option<Rope<'s>>)  {
-        match self {
-            Rope::Nil => { (Rope::Nil, None) },
-             Rope::Node(left, right) => {
-                match left.split_at(match_val, matcher) {
-                    (left_rest, Some(result)) => {
-                        (Rope::Node(Box::new(left_rest), right), Some(result))
-                    },
-                    (left_rest, None) => {
-                        match right.split_at(match_val, matcher) {
-                            (rest, Some(result)) => {
-                                (rest, Some( left_rest.concat(result) ))
-                            },
-                            (rest, None) => {
-                                (Rope::Node(Box::new(left_rest), Box::new(rest)), None)
-                            }
-                        }
+        // TODO can optimize the below. would vecs be faster than linked lists?
+        let mut prefix = Rope { data: LinkedList::new() };
+        while !self.data.is_empty() {
+            let mut done = false;
+            let mut process = None;
+            match self.data.front_mut().unwrap() {
+                &mut Leaf::Own(ref mut v) => {
+                    if match_val {
+                    } else {
+                        done = true;
                     }
-                }
-            },
-             Rope::Leaf(Leaf::Own(v)) => {
-                if match_val {
-                    (Rope::Leaf(Leaf::Own(v)), None)
-                } else {
-                    (Rope::Nil, Some(Rope::Leaf(Leaf::Own( ( v ))) ))
-                }
-            },
-             Rope::Leaf(Leaf::Chr(Cow::Borrowed(cow))) => {
-                if let Some(idx) = cow.find(|x| { matcher(x) }) {
+                },
+                &mut Leaf::Chr(Cow::Borrowed(ref mut cow)) => {
+                    if let Some(idx) = cow.find(|x| { matcher(x) }) {
+                        if idx > 0 {
+                            let pair = (*cow).split_at(idx);
+                            prefix.data.push_back(Leaf::Chr(Cow::Borrowed(pair.0)));
+                            *cow = pair.1;
+                        }
+                        done = true;
+                    } 
+                },
+                x => {
                     
-                    let pair = (*cow).split_at(idx);
-                    // TODO copying here
-                    (Rope::Leaf(Leaf::Chr(Cow::Borrowed(pair.1))),
-                        Some(Rope::Leaf(Leaf::Chr(Cow::Borrowed(pair.0)))) )
-                } else {
-                    (self, None)
+                    let idx = match x {
+                        &mut Leaf::Chr(ref mut cow) => cow.find(|x| { matcher(x) }),
+                        _ => None
+                    };
+                    if let Some(idx) = idx {
+                        process = Some(idx)
+                     }
                 }
-            },
-             Rope::Leaf(Leaf::Chr(Cow::Owned(cow))) => {
-                if let Some(idx) = cow.find(|x| { matcher(x) }) {
-                    let pair = (*cow).split_at(idx);
-                    // TODO copying here
-                    (Rope::Leaf(Leaf::Chr(Cow::Owned( pair.1.to_owned() ))),
-                        Some(Rope::Leaf(Leaf::Chr(Cow::Owned( pair.0.to_owned() )))) )
-                } else {
-                    (Rope::Leaf(Leaf::Chr(Cow::Owned(cow))), None)
-                }
-            },
+            }
+            if let Some(idx) = process {
+               let cow = match self.data.pop_front() {
+                    Some(Leaf::Chr(Cow::Owned(cow))) => { cow },
+                    _ =>  { panic!() }
+                };
 
+                // TODO extra copies here -- have one (pref. at the end?) own the whole thing?
+                //if idx > 0 {
+                    let mut s = cow;
+                    let mut rest = s.split_off(idx);
+                    prefix.data.push_back(Leaf::Chr( Cow::Owned(s)));
+                    self.data.push_front(  Leaf::Chr(Cow::Owned(rest)) );
+                    return (self, Some(prefix));
+               /* } else {
+                    self.data.push_front(  Leaf::Chr(Cow::Owned(cow)) );
+                    done = true;
+               }*/
+            }
+            if done {
+                return (self, Some(prefix));
+            } else {
+                prefix.data.push_back(self.data.pop_front().unwrap());
+            }
         }
+        return (prefix, None)
     }
 
     pub fn get_char(&self) -> Option<char> {
-        match self {
-            &Rope::Nil => { None },
-            &Rope::Node(ref left, ref right) => { left.get_char().or(right.get_char()) },
-            &Rope::Leaf(Chr(ref ch)) => { ch.chars().next() }
-            &Rope::Leaf(_) => { panic!("Unexpected value!") },
+        for leaf in self.data.iter() {
+            match leaf {
+                &Leaf::Own(_) => { panic!("Unexpected value") },
+                &Leaf::Chr(ref ch) => {
+                    if let Some(c) = ch.chars().next() {
+                        return Some(c)
+                    }
+                }
+            }
         }
+        None
     }
 
     pub fn split_char(&mut self) -> Option<char> {
-
-        let res = match self {
-            &mut Rope::Nil => { None },
-            &mut Rope::Node(ref mut left, ref mut right) => {
-                left.split_char().or_else(|| { right.split_char() })
-            },
-            &mut Rope::Leaf(Leaf::Chr(Cow::Owned(ref mut ch))) => {
-                if ch.len() > 0 {
-                    let rest = ch.split_off(1);
-                    let out = ch.remove(0);
-                    *ch = rest;
-                    Some(out)
-                } else {
-                    None
-                }
-            },
-            &mut Rope::Leaf(Leaf::Chr(Cow::Borrowed(ref mut ch))) => {
-                if ch.len() > 0 {
-                    let (first, rest) = ch.split_at(1);
-                    *ch = rest;
-                    first.chars().next()
-                } else {
-                    None
+        for leaf in self.data.iter_mut() {
+            match leaf {
+                &mut Leaf::Own(_) => { panic!("Unexpected value") },
+                &mut Leaf::Chr(Cow::Borrowed(ref mut ch)) => {
+                    if let Some(c) = ch.chars().next() {
+                        *ch = ch.split_at(1).1;
+                        return Some(c)
+                    }
+                },
+                &mut Leaf::Chr(Cow::Owned(ref mut ch)) => {
+                    if let Some(c) = ch.chars().next() {
+                        *ch = ch.split_off(1);
+                        return Some(c)
+                    }
                 }
             }
-            &mut Rope::Leaf(_) => { panic!("Unexpected value!") }, 
-        };
-        println!("SPLIT OFF {:?} {:?}", res, self);
-        res
+        }
+        None
     }
+
 }
 
 
@@ -390,10 +434,9 @@ impl<'s> fmt::Debug for ValueClosure<'s> {
         let &ValueClosure(ref scope, ref x) = self;
         scope.fmt(f)?;
         write!(f, "CODE<");
-        x.walk(|i| {
-            i.fmt(f);
-            true
-        });
+        for leaf in x.data.iter() {
+            leaf.fmt(f)?
+        }
         write!(f, ">")?;
         Ok(())
     }

@@ -38,7 +38,7 @@ fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Err
     let mut file = File::open(path)?;
     file.read_to_string(string)?;
     // TODO use Borrowed always
-    Ok(Rope::Leaf(Leaf::Chr(Cow::Borrowed(&string[..]))))
+    Ok(Rope::from_str(Cow::Borrowed(&string[..])))
 }
 
 #[test]

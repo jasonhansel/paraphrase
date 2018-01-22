@@ -27,7 +27,7 @@ fn change_char<'s>(args: Vec<Value<'s>>) -> Value<'s> {
             rest.split_char(); // take the matched character out
             let new_closure = ValueClosure(inner_scope.clone(),
                 Box::new( prefix.unwrap().concat(
-                    Rope::Leaf(Leaf::Chr(replacement))
+                        Rope::from_str(replacement)
                 ).concat(rest) )
             );
             ((Value::Bubble(new_closure)))
@@ -54,7 +54,7 @@ fn if_eq_then<'s>(args: Vec<Value<'s>>) -> Value<'s> {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
             let todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
             Bubble(
-                ValueClosure(finally.0.clone(), Box::new(Rope::Node(todo, finally.force_clone().1)))
+                ValueClosure(finally.0.clone(), Box::new(todo.concat(* finally.force_clone().1)))
             )
         },
         _ => {panic!()}
@@ -114,12 +114,12 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
             }
             // make_mut clones as nec.
             let mut new_scope = Rc::new(dup_scope(&scope));
-            Scope::add_user(&mut new_scope, parts, params, &*closure_data);
+            Scope::add_user(&mut new_scope, parts, params, *closure_data);
             // TODO avoid recursion
             new_expand(new_scope, *to_expand)
         },
-        _ => {
-            panic!("Invalid state");
+        args => {
+            panic!("Invalid state {:?}", args);
         }
 
     }
