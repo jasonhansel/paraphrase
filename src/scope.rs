@@ -8,7 +8,7 @@ use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
 
 pub enum Command {
-    Native(Box<for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>>),
+    Native(Box<for<'s> fn(Vec<Leaf<'s>>) -> Leaf<'s>>),
     InOther(Rc<Scope>),
     User(Vec<String>, Rope<'static>),
     Immediate(Value<'static>),
@@ -61,7 +61,7 @@ impl Scope {
     }
 
     pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
-        for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>
+        for<'s> fn(Vec<Leaf<'s>>) -> Leaf<'s>
     ) {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
@@ -95,7 +95,7 @@ pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Com
             eval( other_scope, scope, command, args)
          },
          &Command::Native(ref code) => {
-             code(&scope, args )
+             code(args )
          },
          &Command::Immediate(ref val) => {
              Leaf::Own( Box::new( val.make_static() ) )

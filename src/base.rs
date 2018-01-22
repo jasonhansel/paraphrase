@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::borrow::Cow;
 
 
-fn change_char<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn change_char<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
         (&Str(ref n), &Str(ref replacement), &Closure(ValueClosure(ref inner_scope, ref h))) => {
             let needle = n.chars().next().unwrap();
@@ -24,7 +24,7 @@ fn change_char<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn if_eq<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn if_eq<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap(), args[3].as_val().unwrap()) {
         (value_a, value_b, &Closure(ref if_true), &Closure(ref if_false)) => {
             let todo = if value_a == value_b { if_true } else { if_false };
@@ -37,7 +37,7 @@ fn if_eq<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
 
 // FIXME: not working yet??
 
-fn if_eq_then<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn if_eq_then<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap(), args[3].as_val().unwrap(), args[4].as_val().unwrap()) {
         (value_a, value_b, &Closure(ref if_true), &Closure(ref if_false), &Closure(ref finally) ) => {
             let todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
@@ -52,7 +52,7 @@ fn if_eq_then<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn bubble<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn bubble<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap()) {
         &Closure(ref closure) => {
             Leaf::Own(Box::new(Bubble(closure.force_clone())))
@@ -61,11 +61,11 @@ fn bubble<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn end_paren<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn end_paren<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     Leaf::Own(Box::new(Value::Str(Cow::from(")".to_owned()))))
 }
 
-fn literal<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn literal<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match args[0].as_val().unwrap() {
         &Closure(ValueClosure(_,ref closure)) => {
             Leaf::Own(Box::new(Value::Str(closure.to_str().unwrap())))
@@ -74,7 +74,10 @@ fn literal<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn define<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+// NOTE: can't define inside of parentheses (intentonally -- I think this is the only sensible
+// opton if we want to allow parallelism -- can this be changed?)
+
+fn define<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
         (&Str(ref name_args),
         &Closure(ValueClosure(ref scope, ref closure_data)),
@@ -108,7 +111,7 @@ fn define<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn expand<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn expand<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match args[0].as_val().unwrap() {
         &Closure(ValueClosure(ref scope, ref contents)) => {
             new_expand(scope, contents.dupe() ).make_static()
@@ -117,7 +120,7 @@ fn expand<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn rescope<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn rescope<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap()) {
     (&Closure(ValueClosure(ref inner_scope, _)),
     &Closure(ValueClosure(_, ref contents))) => {
