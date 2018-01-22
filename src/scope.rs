@@ -5,11 +5,12 @@ use expand::*;
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
+use std::mem::replace;
 
 pub enum Command {
     Native(Box<for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>>),
     InOther(Rc<Scope>),
-    User(Vec<String>, ValueClosure),
+    User(Vec<String>, Rope<'static>),
     Immediate(Value<'static>),
 }
 
@@ -65,8 +66,12 @@ impl Scope {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
 
-    pub fn add_user(&mut self, parts: Vec<CommandPart>, params: Vec<String>, closure: &ValueClosure) {
-        self.commands.insert(parts, Command::User(params, closure.force_clone()));
+    pub fn add_user<'s>(mut this: &mut Rc<Scope>, parts: Vec<CommandPart>,
+                        params: Vec<String>,
+                        rope: &Rope<'s>) {
+        let me = Rc::get_mut(&mut this).unwrap()
+            .commands
+            .insert(parts, Command::User(params, rope.make_static()));
     }
 
     pub fn has_command(&self, parts: &[CommandPart]) -> bool {
@@ -74,14 +79,14 @@ impl Scope {
     }
 }
 
-pub fn dup_scope(scope : &Rc<Scope>) -> Rc<Scope> {
+pub fn dup_scope(scope : &Rc<Scope>) -> Scope {
     // does this make any sense?
-    // TODO improve perf
+    // TODO improve perf - nb InOther is more important now since it determines cope
     let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new() };
     for (key, _) in scope.commands.iter() {
         stat.commands.insert(key.clone(), Command::InOther(scope.clone()));
     }
-    Rc::new(stat)
+    stat
 }
 
 pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<Leaf<'v>>) -> Leaf<'v> {
@@ -95,10 +100,10 @@ pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Com
          &Command::Immediate(ref val) => {
              Leaf::Own( Box::new( val.make_static() ) )
          },
-         &Command::User(ref arg_names, ValueClosure(ref inner_scope, ref contents)) => {
+         &Command::User(ref arg_names, ref contents) => {
              // todo handle args
              //clone() scope?
-             let mut new_scope = dup_scope(inner_scope);
+             let mut new_scope = dup_scope(cmd_scope);
              if arg_names.len() != args.len() {
                  panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
              }
@@ -106,13 +111,12 @@ pub fn eval<'c, 'v>(cmd_scope: &'v Rc<Scope>, scope: Rc<Scope>, command: Vec<Com
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                 Rc::get_mut(&mut new_scope)
-                     .unwrap()
-                     .commands
+                new_scope.commands
                      .insert(vec![Ident(name.to_owned() )],
                      Command::Immediate( arg.as_val().unwrap().make_static() )
                  );
              }
+             let new_scope =Rc::new(new_scope);
              let out = new_expand(&new_scope, contents.make_static() );
              println!("OUTP {:?} {:?}", out, contents);
              out.make_static()

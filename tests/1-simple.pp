@@ -23,3 +23,14 @@ world world :) =
 @
   #change_char(@)(#literal{)});
 :@
+
+#define(recur :x){#if_eq(#x)(yikes){#x, hello}{oh #recur(yikes)}};
+
+oh yikes, hello == #recur(here)
+oh yikes, hello == #recur(there)
+
+
+as a test: hello world ==
+#if_eq_then(#h)(Yolo){ERR1}{#define(w){as a test:}; #define(z){hello world};};
+#w #z
+

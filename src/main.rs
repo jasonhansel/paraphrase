@@ -2,49 +2,19 @@
 #![allow(dead_code)]
 // ^ rls doesn't handle tests correctly
 
-
-
-
-
-// TODO: some tests are failing (removing first character spuriously)
-// TODO: Back to copying
-//
-//
-//
-
 // CURRENT BUGS:
 // - issues with if_Eq and recu'rsive defs
 
 // (allow mutual recursion with a special 'define'? add standard library, improve testability)
 
-// for type system below:
-// - make sure that we can turn a ;-param into an auto-expanding list
-
-// TYPES - to be improved, thought through
-
-// Argument types:
-// (....) <- list<str|list<other>> gets coerced (in various ways, can preserve all) to: string, closure, list, tagged
-//           - strip whitespace (unless the whole thing is whitespace); turn other unwrapped tokens
-//           into strings...
-// {....} <- closure
-// ;....  <- closure (not necessarily expandable)
-
-// Return types:
-// ..... -> list<expchar|other> gets coerced (in various ways, can preserve all) to: string, list<Type>, tagged<Tag>,
-// closure (auto expanded?)
-// (....;   -> the above, or an "unexpandable" closure which will, if this is a ;-command, get used
-// instead of the original text. in fact, for ;-commands in ()-context, retval *must* be such a
-// closure
-
-
-
-// TODO: auto expand Exclosures when they reach the scope that they contain (and are returned from
-// a ;-command).
+// TODO: allow changing "catcodes"
+// TODO: better error handling
+// TODO: misc builtins or library fns (e.g. like m4, and stuff for types)
+// TODO: issue trying to change 'w' back to 'world'
+// TODO: cf assgbk
 // TODO: test if_eq, handle recursive defs.
-
 // TODO fix bugs in test - is newline behavior desirable?
 // bigger issue: 'new world order' duplicated
-
 // NOTE: expanding from the right  === expanding greedily
 
 mod value;
@@ -54,22 +24,13 @@ mod expand;
 
 use scope::*;
 use std::borrow::Cow;
-use std::borrow::Borrow;
-use std::ops::Range;
-use std::collections::HashMap;
+use std::rc::Rc;
 use std::fs::File;
 use std::io::{Read, Error, Write};
 use std::result::Result;
-use std::rc::Rc;
-use std::iter::Iterator;
 use value::*;
-use base::default_scope;
+use base::*;
 use expand::*;
-
-// TODO cloneless
-
-
-// nb also write stdlib.
 
 fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Error> {
     println!("Reading...");
@@ -79,29 +40,6 @@ fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Err
     // TODO use Borrowed always
     Ok(Rope::Leaf(Leaf::Chr(Cow::Borrowed(&string[..]))))
 }
-
-
-
-
-/*
-impl Value {
-    fn serialize(&self) -> String {
-        match self {
-            &Str(ref x) => x.clone(),
-            &Tagged(_, ref x) => x.serialize(),
-            _ => {panic!("Cannot serialize") }
-        }
-    }
-}
-impl<'s> Atom<'s> {
-    fn serialize(&self) -> String {
-        (match self {
-            &Chars(ref x) => x.to_string(),
-            &Val(ref x) => x.serialize()
-        })
-    }
-}
-*/
 
 #[test]
 fn it_works() {

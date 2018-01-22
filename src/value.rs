@@ -32,6 +32,18 @@ pub enum Value<'s> {
     Bubble(ValueClosure) // <- gets auto-expanded when it reaches its original scope
 }
 
+impl<'s> PartialEq for Value<'s> {
+    fn eq(&self, other: &Value<'s>) -> bool {
+        match (self, other) {
+            (&Str(ref a), &Str(ref b)) => { a == b  },
+            (&List(ref a), &List(ref b)) => { a == b }
+            (&OwnedList(ref a), &OwnedList(ref b)) => { a == b },
+            (&Tagged(ref a1, ref b1), &Tagged(ref a2, ref b2)) => { a1 == a2 && b1 == b2 },
+            _ => { false }
+        }
+    }
+}
+
 pub use Value::*;
 
 impl ValueClosure {
@@ -195,6 +207,8 @@ impl<'s> Rope<'s> {
         Rope::Node(Box::new(self), Box::new(other))
     }
 
+
+
     pub fn is_empty(&self) -> bool {
          match self {
             &Rope::Nil => { true }
@@ -216,14 +230,8 @@ impl<'s> Rope<'s> {
         }
     }
 
- //   pub fn walk<T>(
-
     // use wlak more
-    pub fn values(self) -> Vec<Value<'s>> {
-        let mut values = vec![];
 
-        values
-    }
     pub fn values_cnt(&self) -> u32 {
         let mut count = 0;
         self.walk(|leaf| { match leaf {
@@ -308,7 +316,7 @@ impl<'s> Rope<'s> {
                                 println!("BUILT {:?}", s);
                                 Leaf::Own(Box::new(Value::Str( s )))
                             } else {
-                                 panic!("Cannot make sense!");
+                                 panic!("Cannot make sense of: {:?}", self);
                             }
                         }
                     }
@@ -379,19 +387,7 @@ impl<'s> Rope<'s> {
 
         }
     }
-/*
-    pub fn get_str(&self) -> Cow<str> {
-        match self {
-            &Rope::Nil => { Cow::Borrowed("") },
-            &Rope::Chars(Cow::Owned(ref ch)) => { Cow::Owned(ch.clone()) },
-            &Rope::Chars(Cow::Borrowed(ch)) => { Cow::Borrowed(ch) },
-            &Rope::Val(_) => { panic!("Unexpected value!") },
-            &Rope::Node(ref left, ref right) => {
-               left.get_str() + right.get_str()
-            }
-        }
-    }
-*/
+
     pub fn get_char(&self) -> Option<char> {
         match self {
             &Rope::Nil => { None },

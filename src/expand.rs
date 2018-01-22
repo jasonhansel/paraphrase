@@ -1,12 +1,7 @@
-
-
 use scope::*;
 use value::*;
 use std::borrow::Cow;
 use std::rc::Rc;
-
-
-
 
 #[derive(Debug)]
 enum ParseEntry {
@@ -55,7 +50,7 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: &'s Rc<Scope>) -> Rope<'s> {
             let idx = stack.len() - cnt as usize;
             for item in stack.split_off(idx) {
                 println!("CONCATTING {:?}", item);
-                new_rope = new_rope.concat(item.make_static());
+                new_rope = new_rope.concat(item);
             }
             println!("POSTCONC {:?}", new_rope);
             stack.push(
@@ -157,9 +152,9 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
             let file = self.instr.split_off(idx);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
-            let result = do_expand(file, scope).get_leaf().make_static();
+            let result = do_expand(file, scope).get_leaf();
             if let Some(bubble) = result.bubble(scope) {
-                return bubble
+                return bubble.make_static()
             } else {
                 panic!("Hit an in-call semiparameter, but wasn't a bubble");
             }
@@ -231,6 +226,7 @@ fn parse<'f, 'r, 's : 'r>(
                 }
 
             } else {
+            println!("PREPARING {:?} {:?} {:?}", parts, rope, scope);
                 let (r, _) = rope.split_at(false, &mut |ch : char| {
                     println!("SCANW {:?}", ch);
                     if ch.is_whitespace() {
@@ -344,6 +340,12 @@ impl<'s> Value<'s> {
             _ => {panic!("Cannot coerce value into string!")}
         }
     }
+}
+// TODO: make sure user can define their own bubble-related fns.
+pub fn new_expand_nobubble<'f, 'r : 'f>(scope: &'f Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
+    let mut expander = Expander::new();
+    parse(scope.clone(), tokens, &mut expander);
+    expander.do_expand(&scope).get_leaf()
 }
 
 // TODO: make sure user can define their own bubble-related fns.

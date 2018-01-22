@@ -1,31 +1,22 @@
-
-
 use scope::*;
 use value::*;
 use expand::*;
 use std::rc::Rc;
 use std::borrow::Cow;
-use std::collections::HashMap;
 
-// TODO: allow changing "catcodes"
-// TODO: better error handling
-// TODO: misc builtins or library fns (e.g. like m4, and stuff for types)
-// TODO: issue trying to change 'w' back to 'world'
 
-fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn change_char<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
         (&Str(ref n), &Str(ref replacement), &Closure(ValueClosure(ref inner_scope, ref h))) => {
             let needle = n.chars().next().unwrap();
-            let mut haystack = h.make_static();
-            let (h, prefix) = haystack.split_at(true, &mut |ch| {
+            let (mut rest, prefix) = h.make_static().split_at(true, &mut |ch| {
                 ch == needle
             });
-            haystack = h;
-            haystack.split_char(); // take the matched character out
+            rest.split_char(); // take the matched character out
             let new_closure = ValueClosure(inner_scope.clone(),
                 Box::new( prefix.unwrap().concat(
                     Rope::Leaf(Leaf::Chr(Cow::Borrowed(replacement)))
-                ).concat(haystack.make_static()).make_static() )
+                ).concat(rest).make_static() )
             );
             Leaf::Own(Box::new(Value::Bubble(new_closure)))
         },
@@ -33,10 +24,48 @@ fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn end_paren<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn if_eq<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap(), args[3].as_val().unwrap()) {
+        (value_a, value_b, &Closure(ref if_true), &Closure(ref if_false)) => {
+            let todo = if value_a == value_b { if_true } else { if_false };
+            Leaf::Own(Box::new(Bubble(todo.force_clone())))
+        },
+        _ => {panic!()}
+    }
+}
+
+
+// FIXME: not working yet??
+
+fn if_eq_then<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap(), args[3].as_val().unwrap(), args[4].as_val().unwrap()) {
+        (value_a, value_b, &Closure(ref if_true), &Closure(ref if_false), &Closure(ref finally) ) => {
+            let todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
+
+            let rv = Leaf::Own(Box::new(Bubble(
+                ValueClosure(finally.0.clone(), Box::new(Rope::Node(todo, finally.force_clone().1)))
+            )));
+
+            rv
+        },
+        _ => {panic!()}
+    }
+}
+
+fn bubble<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+    match (args[0].as_val().unwrap()) {
+        &Closure(ref closure) => {
+            Leaf::Own(Box::new(Bubble(closure.force_clone())))
+        },
+        _ => panic!()
+    }
+}
+
+fn end_paren<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     Leaf::Own(Box::new(Value::Str(Cow::from(")".to_owned()))))
 }
-fn literal<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+
+fn literal<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match args[0].as_val().unwrap() {
         &Closure(ValueClosure(_,ref closure)) => {
             Leaf::Own(Box::new(Value::Str(closure.to_str().unwrap())))
@@ -45,10 +74,10 @@ fn literal<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     }
 }
 
-fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
+fn define<'s>(_: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match (args[0].as_val().unwrap(), args[1].as_val().unwrap(), args[2].as_val().unwrap()) {
         (&Str(ref name_args),
-        &Closure(ref closure),
+        &Closure(ValueClosure(ref scope, ref closure_data)),
         &Closure(ValueClosure(_, ref to_expand))) => {
 
             if name_args.is_empty() {
@@ -67,16 +96,13 @@ fn define<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
                 }
             }
             // make_mut clones as nec.
-            let mut new_scope = dup_scope(scope);
-            // circular refs here?
-            Rc::get_mut(&mut new_scope)
-                .unwrap()
-                .add_user(parts, params, closure);
+            let mut new_scope = Rc::new(dup_scope(scope));
+            Scope::add_user(&mut new_scope, parts, params, closure_data);
             // TODO avoid clone here
-            new_expand(&new_scope.clone(), to_expand.dupe() ).make_static()
+            new_expand(&new_scope, to_expand.dupe() ).make_static()
         },
         _ => {
-            panic!("Invalid state")
+            panic!("Invalid state: {:?}", args)
         }
 
     }
@@ -122,6 +148,9 @@ pub fn default_scope() -> Scope {
     scope.add_native(vec![ Ident("literal".to_owned()), Param ],
         literal
     );
+    scope.add_native(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ], if_eq);
+    scope.add_native(vec![ Ident("if_eq_then".to_owned()), Param, Param, Param, Param, Param ], if_eq_then);
+    scope.add_native(vec![ Ident("bubble".to_owned()), Param ], bubble);
 
 
     /*
