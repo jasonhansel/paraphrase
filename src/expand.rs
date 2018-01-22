@@ -150,7 +150,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
             let result = do_expand(file, scope.clone()).get_leaf();
-            if let Some(bubble) = result.bubble(scope) {
+            if let Some(bubble) = result.bubble_move(scope) {
                 return bubble
             } else {
                 panic!("Hit an in-call semiparameter, but wasn't a bubble");
@@ -342,7 +342,7 @@ impl<'s> Value<'s> {
 
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f, 'r : 'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
+pub fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
     expander.do_expand(scope.clone()).to_leaf(scope.clone())

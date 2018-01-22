@@ -11,11 +11,11 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
-pub struct ValueClosure(pub Rc<Scope>, pub Box<Rope<'static>>);
+pub struct ValueClosure<'s>(pub Rc<Scope>, pub Box<Rope<'s>>);
 
-impl ValueClosure {
-    fn from<'s>(scope: Rc<Scope>, rope: Rope<'s>) -> ValueClosure {
-        ValueClosure(scope, Box::new(rope.make_static()))
+impl<'s> ValueClosure<'s> {
+    fn from(scope: Rc<Scope>, rope: Rope<'s>) -> ValueClosure<'s> {
+        ValueClosure(scope, Box::new(rope))
     }
 }
 
@@ -28,8 +28,8 @@ pub enum Value<'s> {
     List(Vec<&'s Value<'s>>),
     OwnedList(Vec<Value<'s>>),
     Tagged(Tag,Box<Value<'s>>),
-    Closure(ValueClosure),
-    Bubble(ValueClosure) // <- gets auto-expanded when it reaches its original scope
+    Closure(ValueClosure<'s>),
+    Bubble(ValueClosure<'s>) // <- gets auto-expanded when it reaches its original scope
 }
 
 impl<'s> PartialEq for Value<'s> {
@@ -46,8 +46,8 @@ impl<'s> PartialEq for Value<'s> {
 
 pub use Value::*;
 
-impl ValueClosure {
-    pub fn force_clone(&self) -> ValueClosure {
+impl<'s> ValueClosure<'s> {
+    pub fn force_clone(&self) -> ValueClosure<'static> {
         match self {
            &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
         }
@@ -68,18 +68,18 @@ impl<'s,'t> Value<'s> {
     }
 }
 
-impl<'s> Leaf<'static> {
+/*
+impl<'s> Leaf<'s> {
     pub fn dupe(&'s self) -> Leaf<'s> {
         // AVOID USING THIS
         match self {
-            &Val(ref v) => Val(v),
             &Own(ref v) => Val(v),
             &Chr(ref v) => Chr(Cow::Owned(v.clone().into_owned())),
         }
     }
 }
 
-impl<'s> Rope<'static> {
+impl<'s> Rope<'s> {
     pub fn dupe(&'s self) -> Rope<'s> { 
         match self {
             &Rope::Node(ref l, ref r) => Rope::Node(Box::new(l.dupe()),Box::new(r.dupe())),
@@ -88,13 +88,13 @@ impl<'s> Rope<'static> {
         }
     }
 }
+*/
 /* UNBALANCED, BORROWED rope data structure
  * Slightly inspired by: https://github.com/mthadley/rupe/blob/master/src/lib.rs
  * (Not quite a rope at the moment) */
 
 #[derive(Debug)]
 pub enum Leaf<'s> {
-    Val(&'s Value<'s>),
     Own(Box<Value<'s>>),
     Chr(Cow<'s, str>)
 }
@@ -112,24 +112,40 @@ pub enum Rope<'s> {
 use std::ptr;
 
 impl<'s> Leaf<'s> {
-    pub fn bubble(&self, scope: Rc<Scope>) -> Option<Rope<'s>> {
-        if let Some(&Value::Bubble(ref closure)) = self.as_val() {
-            let &ValueClosure(ref inner_scope, ref contents) = closure;
-            if Rc::ptr_eq(inner_scope, &scope) {
-                return Some(contents.make_static())
-            } else {
-                panic!("SAD BUBBLING"); // just a test
+    pub fn bubble(&self, scope: Rc<Scope>) -> Option<&Rope<'s>> {
+        if let &Leaf::Own(ref v) = self {
+            if let &Value::Bubble(ref closure) = &**v {
+                let &ValueClosure(ref inner_scope, ref contents) = closure;
+                if Rc::ptr_eq(&inner_scope, &scope) {
+                    return Some(&**contents)
+                } else {
+                    panic!("SAD BUBBLING"); // just a test
+                }
             }
         }
         return None
     }
+ 
+    pub fn bubble_move(self, scope: Rc<Scope>) -> Option<Rope<'s>> {
+        if let Leaf::Own(v) = self {
+            if let Value::Bubble(closure) = *v {
+                let ValueClosure(inner_scope, contents) = closure;
+                if Rc::ptr_eq(&inner_scope, &scope) {
+                    return Some(*contents)
+                } else {
+                    panic!("SAD BUBBLING"); // just a test
+                }
+            }
+        }
+        return None
+    }
+
 
     pub fn to_str(&self) -> Option<&Cow<'s, str>> {
         // TODO: may need to handle Bubbles here
         match self {
             &Leaf::Chr(ref c) => { Some(c) },
 
-            &Leaf::Val(&Value::Str(ref v)) => { Some(v) },
             &Leaf::Own(ref v) => {
                 match &**v {
                     &Value::Str(ref v) => { Some(v) },
@@ -139,11 +155,10 @@ impl<'s> Leaf<'s> {
             _ => None
         }
     }
-    pub fn as_val(&self) -> Option<&Value> {
+    pub fn as_val(self) -> Option<Value<'s>> {
         match self {
-            &Leaf::Chr(_) => { None  },
-            &Leaf::Val(ref v) => { Some(v) }
-            &Leaf::Own(ref v) => { Some(v) }
+            Leaf::Chr(_) => { None  },
+            Leaf::Own(v) => { Some(*v) }
         }
     }
 
@@ -156,7 +171,6 @@ impl<'s> Leaf<'s> {
             let owned = Cow::Owned(c.clone().into_owned());
             Leaf::Chr(owned)
         },
-        &Val(ref v) => { Leaf::Own( Box::new( v.make_static() )) },
         &Own(ref v) => { Leaf::Own( Box::new( v.make_static() ))  }
     } }
 
@@ -183,7 +197,6 @@ impl<'s> Rope<'s> {
                 let owned = Cow::Owned((**c).to_owned());
                 Rope::Leaf(Leaf::Chr(owned))
             },
-            &Rope::Leaf(Val(ref v)) => { Rope::Leaf( Leaf::Own( Box::new( v.make_static() ) )) },
             &Rope::Leaf(Own(ref v)) => { Rope::Leaf( Leaf::Own( Box::new( v.make_static() ) )) },
         }
     }
@@ -191,9 +204,18 @@ impl<'s> Rope<'s> {
     pub fn debubble<'t>(&mut self, scope: Rc<Scope>) {
         match self {
             &mut Rope::Leaf(ref mut l) => {
-                if let Some(bubble) = l.bubble(scope.clone()) {
-                    replace(l, new_expand(scope, bubble));
+                let mut new_l = None;
+                if let &mut Leaf::Own(ref mut v) = l {
+                    if let &Value::Bubble(ref closure) = &**v {
+                        let ValueClosure(inner_scope, contents) = closure.force_clone();
+                        if Rc::ptr_eq(&inner_scope, &scope) {
+                            new_l = Some(new_expand(scope, *contents ))
+                        } else {
+                            panic!("SAD BUBBLING"); // just a test
+                        }
+                    }
                 }
+                if let Some(n) = new_l { replace(l, n); }
             },
             &mut Rope::Node(ref mut l, ref mut r) => {
                 l.debubble(scope.clone());
@@ -215,7 +237,6 @@ impl<'s> Rope<'s> {
 
             &Rope::Node(ref l, ref r) => { l.is_empty() && r.is_empty() }
             &Rope::Leaf(Leaf::Chr(ref c)) => { c.len() == 0 }
-            &Rope::Leaf(Leaf::Val(_)) => { false }
             &Rope::Leaf(Leaf::Own(_)) => { false }
         }
     }
@@ -225,7 +246,6 @@ impl<'s> Rope<'s> {
            &Rope::Nil => { true }
            &Rope::Node(ref l, ref r) => { l.is_white() && r.is_white() }
            &Rope::Leaf(Leaf::Chr(ref c)) =>  { c.chars().all(|x| { x.is_whitespace() }) }
-           &Rope::Leaf(Leaf::Val(_)) => { true  }
            &Rope::Leaf(Leaf::Own(_)) => { true }
         }
     }
@@ -236,7 +256,6 @@ impl<'s> Rope<'s> {
         let mut count = 0;
         self.walk(|leaf| { match leaf {
             &Chr(_) => {},
-            &Val(ref v) => { count += 1 }
             &Own(ref v) => { count += 1 }
         }; true });
         count
@@ -293,8 +312,7 @@ impl<'s> Rope<'s> {
     pub fn get_leaf(self) -> Leaf<'s> {
         match self {
             Rope::Nil => { panic!() }
-           Rope::Leaf(Val(ref l)) => { return Val(l) }
-            Rope::Leaf(Own(ref l)) => { return Own(Box::new(l.make_static())) }
+            Rope::Leaf(Own(l)) => { return Own(l) }
             Rope::Leaf(Chr(c)) => { return Own(Box::new( Value::Str( Cow::Owned( c.clone().into_owned() ) ))) }
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
@@ -306,7 +324,6 @@ impl<'s> Rope<'s> {
                             let mut val = None;
                             self.move_walk(|leaf| { match leaf {
                                 Chr(_) => { true },
-                                Val(v) => { val = Some(Leaf::Val(v)); false },
                                 Own(v) => { val = Some(Leaf::Own(v)); false }
                             } });
                             val.unwrap()
@@ -346,14 +363,6 @@ impl<'s> Rope<'s> {
                             }
                         }
                     }
-                }
-            },
-             Rope::Leaf(Leaf::Val(v)) => {
-                if match_val {
-                    (self, None)
-                } else {
-                    // todo fix this
-                    (Rope::Nil, Some(self))
                 }
             },
              Rope::Leaf(Leaf::Own(v)) => {
@@ -454,7 +463,7 @@ impl fmt::Debug for ValueList {
     }
 }
 */
-impl fmt::Debug for ValueClosure {
+impl<'s> fmt::Debug for ValueClosure<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
         scope.fmt(f)?;
