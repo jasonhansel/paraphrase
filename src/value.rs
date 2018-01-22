@@ -11,10 +11,10 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
-pub struct ValueClosure<'s>(pub Rc<Scope>, pub Box<Rope<'s>>);
+pub struct ValueClosure<'s>(pub Rc<Scope<'static>>, pub Box<Rope<'s>>);
 
 impl<'s> ValueClosure<'s> {
-    fn from(scope: Rc<Scope>, rope: Rope<'s>) -> ValueClosure<'s> {
+    fn from(scope: Rc<Scope<'static>>, rope: Rope<'s>) -> ValueClosure<'s> {
         ValueClosure(scope, Box::new(rope))
     }
 }
@@ -46,49 +46,7 @@ impl<'s> PartialEq for Value<'s> {
 
 pub use Value::*;
 
-impl<'s> ValueClosure<'s> {
-    pub fn force_clone(&self) -> ValueClosure<'static> {
-        match self {
-           &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
-        }
-    }
-}
 
-impl<'s,'t> Value<'s> {
-    pub fn make_static(&'t self) -> Value<'static> {
-        match self {
-            // FIXME: Cow::Owned will cause excessive copying later
-            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
-            &List(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
-            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
-            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.make_static())) },
-            &Closure(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
-            &Bubble(ValueClosure(ref sc, ref ro)) => { Bubble(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
-        }
-    }
-}
-
-/*
-impl<'s> Leaf<'s> {
-    pub fn dupe(&'s self) -> Leaf<'s> {
-        // AVOID USING THIS
-        match self {
-            &Own(ref v) => Val(v),
-            &Chr(ref v) => Chr(Cow::Owned(v.clone().into_owned())),
-        }
-    }
-}
-
-impl<'s> Rope<'s> {
-    pub fn dupe(&'s self) -> Rope<'s> { 
-        match self {
-            &Rope::Node(ref l, ref r) => Rope::Node(Box::new(l.dupe()),Box::new(r.dupe())),
-            &Rope::Leaf(ref l) => Rope::Leaf(l.dupe()),
-            &Rope::Nil => Rope::Nil
-        }
-    }
-}
-*/
 /* UNBALANCED, BORROWED rope data structure
  * Slightly inspired by: https://github.com/mthadley/rupe/blob/master/src/lib.rs
  * (Not quite a rope at the moment) */
@@ -162,14 +120,6 @@ impl<'s> Leaf<'s> {
 
 
 
-    pub fn make_static(&self) -> Leaf<'static> { match self {
-        // TODO avoid this at all costs
-        &Chr(ref c) => {
-            let owned = Cow::Owned(c.clone().into_owned());
-            Leaf::Chr(owned)
-        },
-        &Own(ref v) => { Leaf::Own( Box::new( v.make_static() ))  }
-    } }
 
 
 }
@@ -181,24 +131,7 @@ impl<'s> Rope<'s> {
         return Rope::Nil
     }
 
-    pub fn make_static(&self) -> Rope<'static> {
-        match self {
-            &Rope::Nil => { Rope::Nil },
-            &Rope::Node(ref l, ref r) => {
-                Rope::Node(
-                    Box::new(l.make_static()),
-                    Box::new(r.make_static())
-                )
-            },
-            &Rope::Leaf(Chr(ref c)) => {
-                let owned = Cow::Owned((**c).to_owned());
-                Rope::Leaf(Leaf::Chr(owned))
-            },
-            &Rope::Leaf(Own(ref v)) => { Rope::Leaf( Leaf::Own( Box::new( v.make_static() ) )) },
-        }
-    }
-
-    pub fn debubble<'t>(&mut self, scope: Rc<Scope>) {
+   pub fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
         match self {
             &mut Rope::Leaf(ref mut l) => {
                 if let &mut Leaf::Own(ref mut v) = l {
@@ -301,7 +234,7 @@ impl<'s> Rope<'s> {
         if has { Some(string) } else { None }
     }
 
-    pub fn coerce_bubble(mut self, scope: Rc<Scope>) -> Value<'s> {
+    pub fn coerce_bubble(mut self, scope: Rc<Scope<'static>>) -> Value<'s> {
         self.debubble(scope);
         self.coerce()
     }
@@ -366,7 +299,7 @@ impl<'s> Rope<'s> {
                 if match_val {
                     (Rope::Leaf(Leaf::Own(v)), None)
                 } else {
-                    (Rope::Nil, Some(Rope::Leaf(Leaf::Own( Box::new( v.make_static() ))) ))
+                    (Rope::Nil, Some(Rope::Leaf(Leaf::Own( ( v ))) ))
                 }
             },
              Rope::Leaf(Leaf::Chr(Cow::Borrowed(cow))) => {

@@ -6,16 +6,17 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
+use std::borrow::Cow;
 
-pub enum Command {
+pub enum Command<'c> {
     Native(Box<for<'s> fn(Vec<Value<'s>>) -> Value<'s>>),
-    InOther(Rc<Scope>),
-    User(Vec<String>, Rope<'static>)
+    InOther(Rc<Scope<'c>>),
+    User(Vec<String>, Rope<'c>)
 }
 
 use Command::*;
 
-impl Debug for Command {
+impl<'c> Debug for Command<'c> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             &Native(_) => { write!(f, "[native code]") },
@@ -32,12 +33,12 @@ pub enum CommandPart {
 }
 pub use CommandPart::*;
 
-pub struct Scope {
+pub struct Scope<'c> {
     pub sigil: char,
-    commands: HashMap<Vec<CommandPart>, Command>
+    commands: HashMap<Vec<CommandPart>, Command<'c>>
 }
 
-impl Debug for Scope {
+impl<'c> Debug for Scope<'c> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         let mut first = true;
         write!(f, "[scope @")?;
@@ -50,8 +51,8 @@ impl Debug for Scope {
 }
 
 
-impl Scope {
-    pub fn new(sigil: char) -> Scope {
+impl<'c> Scope<'c> {
+    pub fn new(sigil: char) -> Scope<'c> {
         Scope {
             sigil: sigil,
             commands: HashMap::new()
@@ -78,7 +79,7 @@ impl Scope {
 }
 
 
-pub fn dup_scope(scope : &Rc<Scope>) -> Scope {
+pub fn dup_scope<'s>(scope : &Rc<Scope<'static>>) -> Scope<'static> {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
     let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new() };
@@ -92,7 +93,54 @@ pub fn dup_scope(scope : &Rc<Scope>) -> Scope {
     stat
 }
 
-pub fn eval<'c, 'v>(cmd_scope: Rc<Scope>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
+impl<'s> ValueClosure<'s> {
+    pub fn force_clone(&self) -> ValueClosure<'static> {
+        match self {
+           &ValueClosure(ref sc, ref ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
+        }
+    }
+}
+impl<'s,'t> Value<'s> {
+    fn make_static(&'t self) -> Value<'static> {
+        match self {
+            // FIXME: Cow::Owned will cause excessive copying later
+            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
+            &List(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
+            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.make_static() }).collect()) },
+            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.make_static())) },
+            &Closure(ValueClosure(ref sc, ref ro)) => { Closure(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
+            &Bubble(ValueClosure(ref sc, ref ro)) => { Bubble(ValueClosure(sc.clone(), Box::new(ro.make_static() ))) },
+        }
+    }
+}
+
+impl<'s> Leaf<'s> {
+    fn make_static(&self) -> Leaf<'static> { match self {
+        // TODO avoid this at all costs
+        &Leaf::Chr(ref c) => {
+            let owned = Cow::Owned(c.clone().into_owned());
+            Leaf::Chr(owned)
+        },
+        &Leaf::Own(ref v) => { Leaf::Own( Box::new( v.make_static() ))  }
+    } }
+}
+
+impl<'s> Rope<'s> {
+    fn make_static(&self) -> Rope<'static> {
+        match self {
+            &Rope::Nil => { Rope::Nil },
+            &Rope::Node(ref l, ref r) => {
+                Rope::Node(
+                    Box::new(l.make_static()),
+                    Box::new(r.make_static())
+                )
+            },
+            &Rope::Leaf(ref l) => { Rope::Leaf(l.make_static()) }
+        }
+    }
+}
+
+pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
     match cmd_scope.commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)

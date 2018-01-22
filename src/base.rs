@@ -21,14 +21,14 @@ fn change_char<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, h))), None, ..) => {
             let needle = n.chars().next().unwrap();
-            let (mut rest, prefix) = h.make_static().split_at(true, &mut |ch| {
+            let (mut rest, prefix) = h.split_at(true, &mut |ch| {
                 ch == needle
             });
             rest.split_char(); // take the matched character out
             let new_closure = ValueClosure(inner_scope.clone(),
                 Box::new( prefix.unwrap().concat(
-                    Rope::Leaf(Leaf::Chr(Cow::Owned(replacement.into_owned())))
-                ).concat(rest).make_static() )
+                    Rope::Leaf(Leaf::Chr(replacement))
+                ).concat(rest) )
             );
             ((Value::Bubble(new_closure)))
         },
@@ -111,7 +111,7 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
             let mut new_scope = Rc::new(dup_scope(&scope));
             Scope::add_user(&mut new_scope, parts, params, &*closure_data);
             // TODO avoid clone here
-            new_expand(new_scope, to_expand.make_static())
+            new_expand(new_scope, *to_expand)
         },
         _ => {
             panic!("Invalid state");
@@ -123,7 +123,7 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
 fn expand<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
-            new_expand(scope.clone(), contents.make_static() ).make_static()
+            new_expand(scope.clone(), *contents )
         },
         _ => {panic!("ARG"); }
     }
@@ -133,14 +133,14 @@ fn rescope<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
     (Some(Closure(ValueClosure(inner_scope, _))),
     Some(Closure(ValueClosure(_, contents))),None,..) => {
-         Closure(ValueClosure(inner_scope.clone(), Box::new(contents.make_static() )))
+         Closure(ValueClosure(inner_scope.clone(), contents ))
     },
     _ => {panic!() }
     }
 }
 
 //TODO handle EOF propelry
-pub fn default_scope() -> Scope {
+pub fn default_scope<'c>() -> Scope<'c> {
     let mut scope = Scope::new('#');
     // idea: source maps?
     // add 3rd param (;-kind)

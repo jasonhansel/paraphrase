@@ -15,7 +15,7 @@ pub trait TokenVisitor<'s, 't : 's> {
     fn start_paren(&mut self);
     fn end_paren(&mut self);
     fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, Rc<Scope>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
+    fn semi_param(&mut self, Rc<Scope<'static>>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
     fn text(&mut self, Rope<'s>);
     fn done(&mut self);
 }
@@ -39,7 +39,7 @@ struct Expander<'s> {
 
 // TODO think thru bubbling behavior a bit more
 
-fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope>) -> Rope<'s> {
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope<'static>>) -> Rope<'s> {
     let mut stack : Vec<Rope<'s>> = vec![];
     println!("EXPANDING {:?}", instr);
     for i in instr.into_iter() { match i {
@@ -59,7 +59,7 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope>) -> Rope<'s> {
         },
         Instr::Close(r) => {
             println!("CLOSING {:?}", r);
-            let stat = r.make_static();
+            let stat = r;
             stack.push(
                 Rope::Leaf( Leaf::Own(
                         Box::new(
@@ -93,7 +93,7 @@ impl<'s> Expander<'s> {
             instr: vec![]
         }
     }
-    fn do_expand(self, scope: Rc<Scope>) -> Rope<'s> {
+    fn do_expand(self, scope: Rc<Scope<'static>>) -> Rope<'s> {
         do_expand(self.instr, scope)
     }
 }
@@ -124,7 +124,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         *( self.calls.last_mut().unwrap() ) += 1;
         self.instr.push(Instr::Close(rope));
     }
-    fn semi_param(&mut self, scope: Rc<Scope>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
+    fn semi_param(&mut self, scope: Rc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
         let mut idx = self.instr.len() - 1;
         let mut level = 1;
 
@@ -181,7 +181,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
 // TODO note: can't parse closures in advance because of Rescope
 // TODO: allow includes - will be tricky to avoid copying owned characters around
 fn parse<'f, 'r, 's : 'r>(
-    scope: Rc<Scope>,
+    scope: Rc<Scope<'static>>,
     mut rope: Rope<'s>,
     visitor: &mut TokenVisitor<'s,'s>
 ) {
@@ -342,7 +342,7 @@ impl<'s> Value<'s> {
 
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Value<'f> {
+pub fn new_expand<'f>(scope: Rc<Scope<'static>>, tokens: Rope<'f>) -> Value<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
     expander.do_expand(scope.clone()).coerce_bubble(scope.clone())
