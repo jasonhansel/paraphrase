@@ -3,10 +3,7 @@
 // ^ rls doesn't handle tests correctly
 
 // CURRENT BUGS:
-// - issues with if_Eq and recu'rsive defs
-
 // (allow mutual recursion with a special 'define'? add standard library, improve testability)
-
 // TODO: allow changing "catcodes"
 // TODO: better error handling
 // TODO: misc builtins or library fns (e.g. like m4, and stuff for types)
