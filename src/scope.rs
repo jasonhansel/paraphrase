@@ -2,11 +2,9 @@
 use value::*;
 use expand::*;
 
-use std::borrow::Cow;
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
-use std::ptr;
 
 pub enum Command {
     Native(Box<for<'s> fn(&Rc<Scope>, Vec<Leaf<'s>>) -> Leaf<'s>>),
@@ -23,7 +21,7 @@ impl Debug for Command {
             &Native(_) => { write!(f, "[native code]") },
             &Immediate(ref v) => { v.fmt(f) },
             &User(ref s, ref v) => { write!(f, "params (")?; s.fmt(f)?; write!(f, ") in "); v.fmt(f) },
-            &InOther(ref s) => { write!(f, "reference to other scope") }
+            &InOther(_) => { write!(f, "reference to other scope") }
         }
     }
 }

@@ -17,12 +17,13 @@ fn change_char<'s>(scope: &Rc<Scope>, args: Vec<Leaf<'s>>) -> Leaf<'s> {
         (&Str(ref n), &Str(ref replacement), &Closure(ValueClosure(ref inner_scope, ref h))) => {
             let needle = n.chars().next().unwrap();
             let mut haystack = h.make_static();
-            let prefix = haystack.split_at(true, &mut |ch| {
+            let (h, prefix) = haystack.split_at(true, &mut |ch| {
                 ch == needle
-            }).unwrap();
+            });
+            haystack = h;
             haystack.split_char(); // take the matched character out
             let new_closure = ValueClosure(inner_scope.clone(),
-                Box::new( prefix.concat(
+                Box::new( prefix.unwrap().concat(
                     Rope::Leaf(Leaf::Chr(Cow::Borrowed(replacement)))
                 ).concat(haystack.make_static()).make_static() )
             );

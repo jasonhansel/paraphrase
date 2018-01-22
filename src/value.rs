@@ -1,16 +1,9 @@
 
 use std::fmt;
 use std::rc::Rc;
-use std::borrow::Borrow;
 use scope::Scope;
 use std::borrow::Cow;
-
-use std::result::Result;
-use std::fs::File;
-use std::io::{Read, Error, Write};
-use std::iter::{empty, once};
-use std::mem::{swap, replace};
-
+use std::mem::replace;
 use expand::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -161,25 +154,9 @@ impl<'s> Leaf<'s> {
 
 
 impl<'s> Rope<'s> {
-/*    fn force_clone(&self) -> Rope<'static> {
-        match self {
-            &Rope::Nil => { Rope::Nil },
-            &Rope::Node(ref l, ref r) => {
-                Rope::Node(
-                    Box::new( l.shallow_copy() ),
-                    Box::new( r.shallow_copy() )
-                )
-            },
-            &Rope::Char(ref c) => { Rope::Char(Cow::Owned(c.clone().into_owned())) }
-            &Rope::Val(ref v) => { Rope::Val(Cow::Owned(v.clone().into_owned())) }
-        }
-    }
-*/
     pub fn new() -> Rope<'s> {
         return Rope::Nil
     }
-
-
 
     pub fn make_static(&self) -> Rope<'static> {
         match self {
@@ -203,7 +180,6 @@ impl<'s> Rope<'s> {
         match self {
             &mut Rope::Leaf(ref mut l) => {
                 if let Some(bubble) = l.bubble(scope) {
-                    println!("BUBBLER {:?}", bubble);
                     replace(l, new_expand(scope, bubble));
                 }
             },
@@ -327,66 +303,67 @@ impl<'s> Rope<'s> {
     }
         // may want to make this stuff iterative
     pub fn split_at<'q, F : FnMut(char) -> bool>
-        (&mut self, match_val : bool, matcher: &mut F)
-        -> Option<Rope<'s>>  {
+        (mut self, match_val : bool, matcher: &mut F)
+        -> (Rope<'s>, Option<Rope<'s>>)  {
         println!("SHIELD {:?}", self);
         let mut out : Option<Rope<'s>> = None;
-        let mut make_nil = false;
         match self {
-            &mut Rope::Nil => { println!("THORAX"); },
-            &mut Rope::Node(ref mut left, ref mut right) => {
+            Rope::Nil => { (Rope::Nil, None) },
+             Rope::Node(left, right) => {
                 match left.split_at(match_val, matcher) {
-                    Some(result) => {
-                        out = Some(result);
-                    }
-                    None => {
+                    (left_rest, Some(result)) => {
+                        (Rope::Node(Box::new(left_rest), right), Some(result))
+                    },
+                    (left_rest, None) => {
                         match right.split_at(match_val, matcher) {
-                            Some(result) => { 
-                                out = Some(
-                                    replace(left, Box::new(Rope::Nil))
-                                        .concat(result)
-                                );
+                            (rest, Some(result)) => {
+                                (rest, Some( left_rest.concat(result) ))
                             },
-                            None => {
+                            (rest, None) => {
+                                (Rope::Node(Box::new(left_rest), Box::new(rest)), None)
                             }
                         }
                     }
                 }
             },
-            &mut Rope::Leaf(Leaf::Val(v)) => {
+             Rope::Leaf(Leaf::Val(v)) => {
                 if match_val {
+                    (self, None)
                 } else {
                     // todo fix this
-                    println!("LORAX");
-                    out = Some(replace(self, Rope::Nil))
+                    (Rope::Nil, Some(self))
                 }
             },
-            &mut Rope::Leaf(Leaf::Own(ref v)) => {
+             Rope::Leaf(Leaf::Own(v)) => {
                 if match_val {
+                    (Rope::Leaf(Leaf::Own(v)), None)
                 } else {
-                    println!("ATOWN {:?}", v);
-                    out = Some(Rope::Leaf(Leaf::Own( Box::new( v.make_static() ))) );
-                    make_nil = true;
+                    (Rope::Nil, Some(Rope::Leaf(Leaf::Own( Box::new( v.make_static() ))) ))
                 }
             },
-            &mut Rope::Leaf(Leaf::Chr(ref mut cow)) => {
+             Rope::Leaf(Leaf::Chr(Cow::Borrowed(cow))) => {
                 if let Some(idx) = cow.find(|x| { matcher(x) }) {
-                    let ncow = {
-                        let pair = cow.split_at(idx);
-                        println!("AT: {:?}", pair);
+                    
+                    let pair = (*cow).split_at(idx);
                     // TODO copying here
-                        out = Some(Rope::Leaf(Leaf::Chr(Cow::Owned(pair.0.to_owned()))).make_static());
-                        Cow::Owned(pair.1.to_owned())
-                    };
-                    *cow = ncow;
+                    (Rope::Leaf(Leaf::Chr(Cow::Borrowed(pair.1))),
+                        Some(Rope::Leaf(Leaf::Chr(Cow::Borrowed(pair.0)))) )
+                } else {
+                    (self, None)
                 }
             },
-        };
-        if make_nil {
-            *self = Rope::Nil
+             Rope::Leaf(Leaf::Chr(Cow::Owned(cow))) => {
+                if let Some(idx) = cow.find(|x| { matcher(x) }) {
+                    let pair = (*cow).split_at(idx);
+                    // TODO copying here
+                    (Rope::Leaf(Leaf::Chr(Cow::Owned( pair.1.to_owned() ))),
+                        Some(Rope::Leaf(Leaf::Chr(Cow::Owned( pair.0.to_owned() )))) )
+                } else {
+                    (Rope::Leaf(Leaf::Chr(Cow::Owned(cow))), None)
+                }
+            },
+
         }
-        println!("YIELD {:?} {:?}", out, self);
-        out
     }
 /*
     pub fn get_str(&self) -> Cow<str> {

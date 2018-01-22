@@ -206,7 +206,7 @@ fn parse<'f, 'r, 's : 'r>(
                 // continue to next work item
             } else if parts.len() == 0 {
                 println!("HERE");
-                let mut ident = rope.split_at(false, &mut |chr : char| {
+                let (r, ident) = rope.split_at(false, &mut |chr : char| {
                     println!("CHECKING {:?}", chr);
                     if chr.is_alphabetic() || chr == '_' || chr == scope.sigil {
                         // dumb check for sigil /here
@@ -215,6 +215,7 @@ fn parse<'f, 'r, 's : 'r>(
                         true
                     }
                 });
+                rope = r;
 
                 if let Some(mut id) = ident {
                     id.split_char(); // get rid of sigil
@@ -230,14 +231,15 @@ fn parse<'f, 'r, 's : 'r>(
                 }
 
             } else {
-                rope.split_at(false, &mut |ch : char| {
+                let (r, _) = rope.split_at(false, &mut |ch : char| {
                     println!("SCANW {:?}", ch);
                     if ch.is_whitespace() {
                         return false;
                     } else {
                         return true;
                     }
-                }).unwrap();
+                });
+                rope = r;
 
                 let chr = rope.split_char().unwrap();
                 if chr == '(' {
@@ -258,7 +260,7 @@ fn parse<'f, 'r, 's : 'r>(
                     rope = visitor.semi_param(&scope, rope, parts.split_off(0));
                 } else if chr == '{' {
                     let mut raw_level = 1;
-                    let param = rope.split_at(true, &mut |ch| { 
+                    let (r, param) = rope.split_at(true, &mut |ch| { 
                         println!("RAW {:?} {:?}", ch, raw_level);
                         raw_level += match ch {
                             '{' => 1,
@@ -266,12 +268,11 @@ fn parse<'f, 'r, 's : 'r>(
                             _ => 0
                         };
                         raw_level == 0
-                    }).unwrap();
-                    println!("FRAW {:?}", param);
+                    });
+                    rope = r;
                     rope.split_char();
-                    println!("REST {:?}", rope);
                     parts.push(Param);
-                    visitor.raw_param(param);
+                    visitor.raw_param(param.unwrap());
                     stack.push(ParseEntry::Command(parts));
                 } else {
                     panic!("Failed {:?} {:?} {:?}", rope, parts, chr);
@@ -280,7 +281,7 @@ fn parse<'f, 'r, 's : 'r>(
         },
         ParseEntry::Text(mut paren_level, in_call) => {
             let mut pos = 0;
-            let prefix = rope.split_at(true, &mut |x| { 
+            let (r, prefix) = rope.split_at(true, &mut |x| { 
                 
                 println!("SCAN {:?}", x);
                 match x{
@@ -308,6 +309,7 @@ fn parse<'f, 'r, 's : 'r>(
                         }
                     }
                 } });
+            rope = r;
             if let Some(p) = prefix {
                 if !p.is_empty() {
                     visitor.text(p);
