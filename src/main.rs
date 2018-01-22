@@ -46,7 +46,7 @@ fn it_works() {
     let mut s = String::new();
     let mut chars = read_file(&mut s, "tests/1-simple.pp").unwrap();
     let scope = Rc::new(default_scope());
-    let results = new_expand(&scope, chars);
+    let results = new_expand(scope, chars);
     println!("||\n{}||", results.to_str().unwrap());
     // ISSUE: extra whitespace at end of output
  //   assert_eq!(out, "Hello world!\n");

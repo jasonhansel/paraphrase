@@ -112,10 +112,10 @@ pub enum Rope<'s> {
 use std::ptr;
 
 impl<'s> Leaf<'s> {
-    pub fn bubble(&self, scope: &Rc<Scope>) -> Option<Rope<'s>> {
+    pub fn bubble(&self, scope: Rc<Scope>) -> Option<Rope<'s>> {
         if let Some(&Value::Bubble(ref closure)) = self.as_val() {
             let &ValueClosure(ref inner_scope, ref contents) = closure;
-            if ptr::eq(&**inner_scope as *const Scope, &**scope as *const Scope) {
+            if Rc::ptr_eq(inner_scope, &scope) {
                 return Some(contents.make_static())
             } else {
                 panic!("SAD BUBBLING"); // just a test
@@ -188,15 +188,15 @@ impl<'s> Rope<'s> {
         }
     }
 
-    pub fn debubble<'t>(&mut self, scope: &'s Rc<Scope>) {
+    pub fn debubble<'t>(&mut self, scope: Rc<Scope>) {
         match self {
             &mut Rope::Leaf(ref mut l) => {
-                if let Some(bubble) = l.bubble(scope) {
+                if let Some(bubble) = l.bubble(scope.clone()) {
                     replace(l, new_expand(scope, bubble));
                 }
             },
             &mut Rope::Node(ref mut l, ref mut r) => {
-                l.debubble(scope);
+                l.debubble(scope.clone());
                 r.debubble(scope);
             },
             &mut Rope::Nil => {}
@@ -285,7 +285,7 @@ impl<'s> Rope<'s> {
         if has { Some(string) } else { None }
     }
 
-    pub fn to_leaf(mut self, scope: &'s Rc<Scope>) -> Leaf<'s> {
+    pub fn to_leaf(mut self, scope: Rc<Scope>) -> Leaf<'s> {
         self.debubble(scope);
         self.get_leaf()
     }

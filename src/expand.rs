@@ -15,7 +15,7 @@ pub trait TokenVisitor<'s, 't : 's> {
     fn start_paren(&mut self);
     fn end_paren(&mut self);
     fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, &Rc<Scope>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
+    fn semi_param(&mut self, Rc<Scope>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
     fn text(&mut self, Rope<'s>);
     fn done(&mut self);
 }
@@ -39,7 +39,7 @@ struct Expander<'s> {
 
 // TODO think thru bubbling behavior a bit more
 
-fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: &'s Rc<Scope>) -> Rope<'s> {
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope>) -> Rope<'s> {
     let mut stack : Vec<Rope<'s>> = vec![];
     println!("EXPANDING {:?}", instr);
     for i in instr.into_iter() { match i {
@@ -68,16 +68,13 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: &'s Rc<Scope>) -> Rope<'s> {
             );
         }
         Instr::Call(cnt, cmd) => {
-            println!("CALLING {:?} {:?}", stack.len(), cnt);
             let idx = stack.len() - cnt as usize;
             let args = stack.drain(idx..)
-                .map(|x| { x.to_leaf(scope) })
+                .map(|x| { x.to_leaf(scope.clone()) })
                 .collect::<Vec<_>>();
-            println!("ARGDAT {:?} {:?}", cnt, cmd);
             // TODO: currently there are lots of nested eval() calls when working with closures --
             // e.g. with *macro definitions*
-            let result = eval(scope, scope.clone(), cmd, args);
-            println!("RES {:?}", result);
+            let result = eval(scope.clone(), cmd, args);
             stack.push( Rope::Leaf( result ) );
         }
 
@@ -96,7 +93,7 @@ impl<'s> Expander<'s> {
             instr: vec![]
         }
     }
-    fn do_expand(self, scope: &'s Rc<Scope>) -> Rope<'s> {
+    fn do_expand(self, scope: Rc<Scope>) -> Rope<'s> {
         do_expand(self.instr, scope)
     }
 }
@@ -127,7 +124,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         *( self.calls.last_mut().unwrap() ) += 1;
         self.instr.push(Instr::Close(rope));
     }
-    fn semi_param(&mut self, scope: &Rc<Scope>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
+    fn semi_param(&mut self, scope: Rc<Scope>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
         let mut idx = self.instr.len() - 1;
         let mut level = 1;
 
@@ -152,9 +149,9 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
             let file = self.instr.split_off(idx);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
-            let result = do_expand(file, scope).get_leaf();
+            let result = do_expand(file, scope.clone()).get_leaf();
             if let Some(bubble) = result.bubble(scope) {
-                return bubble.make_static()
+                return bubble
             } else {
                 panic!("Hit an in-call semiparameter, but wasn't a bubble");
             }
@@ -253,7 +250,7 @@ fn parse<'f, 'r, 's : 'r>(
                     if !scope.has_command(&parts) {
                         panic!("Invalid semicolon");
                     }
-                    rope = visitor.semi_param(&scope, rope, parts.split_off(0));
+                    rope = visitor.semi_param(scope.clone(), rope, parts.split_off(0));
                 } else if chr == '{' {
                     let mut raw_level = 1;
                     let (r, param) = rope.split_at(true, &mut |ch| { 
@@ -342,15 +339,11 @@ impl<'s> Value<'s> {
     }
 }
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand_nobubble<'f, 'r : 'f>(scope: &'f Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
-    let mut expander = Expander::new();
-    parse(scope.clone(), tokens, &mut expander);
-    expander.do_expand(&scope).get_leaf()
-}
+
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f, 'r : 'f>(scope: &'f Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
+pub fn new_expand<'f, 'r : 'f>(scope: Rc<Scope>, tokens: Rope<'f>) -> Leaf<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
-    expander.do_expand(&scope).to_leaf(scope)
+    expander.do_expand(scope.clone()).to_leaf(scope.clone())
 }

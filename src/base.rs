@@ -102,7 +102,7 @@ fn define<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
             let mut new_scope = Rc::new(dup_scope(scope));
             Scope::add_user(&mut new_scope, parts, params, closure_data);
             // TODO avoid clone here
-            new_expand(&new_scope, to_expand.dupe() ).make_static()
+            new_expand(new_scope, to_expand.dupe() ).make_static()
         },
         _ => {
             panic!("Invalid state: {:?}", args)
@@ -114,7 +114,7 @@ fn define<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
 fn expand<'s>(args: Vec<Leaf<'s>>) -> Leaf<'s> {
     match args[0].as_val().unwrap() {
         &Closure(ValueClosure(ref scope, ref contents)) => {
-            new_expand(scope, contents.dupe() ).make_static()
+            new_expand(scope.clone(), contents.dupe() ).make_static()
         },
         _ => {panic!("ARG {:?}", args[0]); }
     }
