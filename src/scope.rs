@@ -95,7 +95,7 @@ pub fn dup_scope<'s>(scope : &Rc<Scope<'static>>) -> Scope<'static> {
 
 
 pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
-    match cmd_scope.commands.get(&command).unwrap() {
+    match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
          },
@@ -117,7 +117,7 @@ pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, ar
                 Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg));
              }
 
-             let out = new_expand(new_scope, contents.dupe().make_static());
+             let out = new_expand(new_scope, contents.dupe()).make_static();
              println!("OUTP {:?} {:?}", out, contents);
              out
          }

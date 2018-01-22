@@ -78,7 +78,7 @@ impl<'s> ValueClosure<'s> {
     }
 }
 impl<'s,'t> Value<'s> {
-    fn make_static(self) -> Value<'static> {
+    pub fn make_static(self) -> Value<'static> {
         match self {
             // FIXME: Cow::Owned will cause excessive copying later
             Str(s) => { Str(Cow::Owned(s.clone().into_owned())) },
@@ -212,7 +212,7 @@ impl<'s> Rope<'s> {
     pub fn from_str(value: Cow<'s, str>) -> Rope<'s> {
         Rope { data: iter::once(Leaf::Chr(value)).collect() }
     }
-    pub fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
+    fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
         for leaf in self.data.iter_mut() {
              if let &mut Leaf::Own(ref mut v) = leaf {
                 let value = replace(v, Value::Str(Cow::from("")));
@@ -252,23 +252,17 @@ impl<'s> Rope<'s> {
     }
 
 
-    // use wlak more
 
     fn should_be_string(&self) -> bool {
-        let mut white = true;
         let mut count = 0;
-        println!("CHECKING {:?}", self);
         for leaf in self.data.iter() {
             match leaf {
-                &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { println!("NW"); return true } }
+                &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { return true } }
                 &Own(_) => { count += 1 }
             }
- //           if count > 1 { return true }
         }
-        println!("CNT {:?}", count);
         return (count != 1)
     }
-
 
     pub fn to_str(&self) -> Option<Cow<'s, str>> {
         let mut has = true;
@@ -287,9 +281,7 @@ impl<'s> Rope<'s> {
     }
 
     pub fn coerce_bubble(mut self, scope: Rc<Scope<'static>>) -> Value<'s> {
-        println!("DEBUBBLE {:?}", self);
         self.debubble(scope);
-        println!("DEBUBBLED {:?}", self);
         self.coerce()
     }
 
@@ -404,10 +396,6 @@ impl<'s> Rope<'s> {
     }
 
 }
-
-
-
-
 
 impl<'s> fmt::Debug for ValueClosure<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
