@@ -221,11 +221,7 @@ impl<'s> Rope<'s> {
     // use wlak more
     pub fn values(self) -> Vec<Value<'s>> {
         let mut values = vec![];
-        self.walk(|leaf| { match leaf {
-            &Chr(_) => {},
-            &Val(ref v) => { values.push(v.make_static()) },
-            &Own(ref v) => { values.push(v.make_static()) }
-        } });
+
         values
     }
     pub fn values_cnt(&self) -> u32 {
@@ -234,10 +230,23 @@ impl<'s> Rope<'s> {
             &Chr(_) => {},
             &Val(ref v) => { count += 1 }
             &Own(ref v) => { count += 1 }
-        } });
+        }; true });
         count
     }
-    fn walk<F : FnMut(&Leaf<'s>)> (&self, mut todo: F) {
+    fn move_walk<F : FnMut(Leaf<'s>) -> bool> (self, mut todo: F) {
+        let mut stack : Vec<Rope<'s>> = vec![
+            self
+        ];
+        while let Some(top) = stack.pop() { match top {
+            Rope::Nil => { }
+            Rope::Node(l, r) => {
+                stack.push(*r);
+                stack.push(*l);
+            }
+            Rope::Leaf(l) => { if !todo(l) { return } }
+        } }
+    }
+    fn walk<F : FnMut(&Leaf<'s>) -> bool> (&self, mut todo: F) {
         let mut stack : Vec<&Rope<'s>> = vec![
             &self
         ];
@@ -247,7 +256,7 @@ impl<'s> Rope<'s> {
                 stack.push(r);
                 stack.push(l);
             }
-            &Rope::Leaf(ref l) => { todo(l) }
+            &Rope::Leaf(ref l) => { if !todo(l) { return } }
         } }
     }
 
@@ -263,6 +272,7 @@ impl<'s> Rope<'s> {
                 Some(&Cow::Owned(ref x)) => { string.to_mut().push_str(&x[..]) },
                 _ => { has = false }
             }
+            true
         });
         if has { Some(string) } else { None }
     }
@@ -281,12 +291,17 @@ impl<'s> Rope<'s> {
             Rope::Node(_, _) => {
                 // TODO think this through a bit more..
                 if !self.is_white() {
-                    println!("BUILTA {:?}", self);
                     Leaf::Own(Box::new(Value::Str( self.to_str().unwrap() )))
                 } else {
                     match self.values_cnt() {
                         1 => {
-                            Leaf::Own(Box::from( self.values().remove(0) ))
+                            let mut val = None;
+                            self.move_walk(|leaf| { match leaf {
+                                Chr(_) => { true },
+                                Val(v) => { val = Some(Leaf::Val(v)); false },
+                                Own(v) => { val = Some(Leaf::Own(v)); false }
+                            } });
+                            val.unwrap()
                         },
                         _ => {
                             if let Some(s) = self.to_str() {
@@ -302,8 +317,7 @@ impl<'s> Rope<'s> {
         }
     }
         // may want to make this stuff iterative
-    pub fn split_at<'q, F : FnMut(char) -> bool>
-        (mut self, match_val : bool, matcher: &mut F)
+    pub fn split_at<F : FnMut(char) -> bool>(self, match_val : bool, matcher: &mut F)
         -> (Rope<'s>, Option<Rope<'s>>)  {
         println!("SHIELD {:?}", self);
         let mut out : Option<Rope<'s>> = None;
@@ -451,6 +465,7 @@ impl fmt::Debug for ValueClosure {
         write!(f, "CODE<");
         x.walk(|i| {
             i.fmt(f);
+            true
         });
         write!(f, ">")?;
         Ok(())
