@@ -304,9 +304,7 @@ fn parse<'f, 'r, 's : 'r>(
                 } });
             rope = r;
             if let Some(p) = prefix {
-                if !p.is_empty() {
-                    visitor.text(p);
-                }
+                visitor.text(p);
             
                 match rope.get_char() {
                     Some(')') => {

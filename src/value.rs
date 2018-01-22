@@ -131,37 +131,35 @@ impl<'s> Rope<'s> {
         return Rope::Nil
     }
 
-   pub fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
-        match self {
-            &mut Rope::Leaf(ref mut l) => {
-                if let &mut Leaf::Own(ref mut v) = l {
-                    let mut new_l = None;
-                    if let &Value::Bubble(ref closure) = &**v {
-                        let ValueClosure(inner_scope, contents) = closure.force_clone();
-                        if Rc::ptr_eq(&inner_scope, &scope) {
-                            new_l = Some(Box::new(new_expand(scope, *contents )))
-                        } else {
-                            panic!("SAD BUBBLING"); // just a test
-                        }
+    pub fn from_value(value: Value<'s>) -> Rope<'s> {
+        Rope::Leaf(Leaf::Own(Box::new(value)))
+    }
+    pub fn from_str(value: Cow<'s, str>) -> Rope<'s> {
+        Rope::Leaf(Leaf::Chr(value))
+    }
+    pub fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
+        self.walk_mut(|leaf| {
+             if let &mut Leaf::Own(ref mut v) = leaf {
+                let mut new_l = None;
+                if let &Value::Bubble(ref closure) = &**v {
+                    let ValueClosure(inner_scope, contents) = closure.force_clone();
+                    if Rc::ptr_eq(&inner_scope, &scope) {
+                        new_l = Some(Box::new(new_expand(scope.clone(), *contents )))
+                    } else {
+                        panic!("SAD BUBBLING"); // just a test
                     }
-                    if let Some(n) = new_l { replace(v, n); }
                 }
-            },
-            &mut Rope::Node(ref mut l, ref mut r) => {
-                l.debubble(scope.clone());
-                r.debubble(scope);
-            },
-            &mut Rope::Nil => {}
-        }
+                if let Some(n) = new_l { replace(v, n); }
+            }
+            true
+        });
     }
 
     pub fn concat(self, other: Rope<'s>) -> Rope<'s> {
         Rope::Node(Box::new(self), Box::new(other))
     }
 
-
-
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
          match self {
             &Rope::Nil => { true }
 
@@ -171,28 +169,19 @@ impl<'s> Rope<'s> {
         }
     }
 
-    pub fn is_white(&self) -> bool {
-        let mut result = true;
-        self.walk(|v| {
-            match v {
-                &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { result = false } }
-                _ => {}
-            }
-            result
-        });
-        result
-    }
 
     // use wlak more
 
-    pub fn values_cnt(&self) -> u32 {
+    fn is_single_value(&self) -> bool {
+        let mut white = true;
         let mut count = 0;
         self.walk(|leaf| { match leaf {
-            &Chr(_) => {},
-            &Own(ref v) => { count += 1 }
-        }; true });
-        count
+            &Leaf::Chr(ref c) => { if c.chars().any(|x| { !x.is_whitespace() }) { white = false } }
+            &Own(_) => { count += 1 }
+        }; !( !white || count > 1 ) });
+        white && count == 1
     }
+
     fn move_walk<F : FnMut(Leaf<'s>) -> bool> (self, mut todo: F) {
         let mut stack : Vec<Rope<'s>> = vec![
             self
@@ -206,6 +195,21 @@ impl<'s> Rope<'s> {
             Rope::Leaf(l) => { if !todo(l) { return } }
         } }
     }
+    fn walk_mut<F : FnMut(&mut Leaf<'s>) -> bool> (&mut self, mut todo: F) {
+        let mut stack : Vec<&mut Rope<'s>> = vec![
+            self
+        ];
+        while let Some(top) = stack.pop() { match top {
+            &mut Rope::Nil => { }
+            &mut Rope::Node(ref mut l, ref mut r) => {
+                stack.push(r);
+                stack.push(l);
+            }
+            &mut Rope::Leaf(ref mut l) => { if !todo(l) { return } }
+        } }
+    }
+
+
     fn walk<F : FnMut(&Leaf<'s>) -> bool> (&self, mut todo: F) {
         let mut stack : Vec<&Rope<'s>> = vec![
             &self
@@ -248,32 +252,22 @@ impl<'s> Rope<'s> {
             Rope::Leaf(Own(l)) => { return *l }
             Rope::Leaf(Chr(c)) => { return Value::Str(c) }
             Rope::Node(_, _) => {
-                // TODO think this through a bit more..
-                if !self.is_white() {
+                if !self.is_single_value() {
                     Value::Str( self.to_str().unwrap() )
                 } else {
-                    match self.values_cnt() {
-                        1 => {
-                            let mut val = None;
-                            self.move_walk(|leaf| { match leaf {
-                                Chr(_) => { true },
-                                Own(v) => { val = Some(*v); false }
-                            } });
-                            val.unwrap()
-                        },
-                        _ => {
-                            Value::Str( self.to_str().unwrap() )
-                        }
-                    }
-                }
+                    let mut val = None;
+                    self.move_walk(|leaf| { match leaf {
+                        Chr(_) => { true },
+                        Own(v) => { val = Some(*v); false }
+                    } });
+                    val.unwrap()
+               }
             }
         }
     }
         // may want to make this stuff iterative
     pub fn split_at<F : FnMut(char) -> bool>(self, match_val : bool, matcher: &mut F)
         -> (Rope<'s>, Option<Rope<'s>>)  {
-        println!("SHIELD {:?}", self);
-        let mut out : Option<Rope<'s>> = None;
         match self {
             Rope::Nil => { (Rope::Nil, None) },
              Rope::Node(left, right) => {
