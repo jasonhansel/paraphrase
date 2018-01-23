@@ -252,8 +252,7 @@ fn parse<'f, 'r, 's : 'r>(
                             true
                         }
                     });
-                    let Some(mut id) = ident.unwrap();
-                    println!("REST {:?} {:?}", r, ident);
+                    let id = ident.unwrap();
                     rope = r;
                     parts.push(Ident( id.to_str().unwrap().into_owned() ));
                     visitor.start_command(id.to_str().unwrap());
@@ -323,7 +322,7 @@ fn parse<'f, 'r, 's : 'r>(
                     }
                 } });
             rope = r;
-            let Some(p) = prefix.unwrap();
+            let p = prefix.unwrap();
             visitor.text(p);
         
             match rope.get_char() {

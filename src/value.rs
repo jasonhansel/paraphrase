@@ -56,12 +56,12 @@ impl<'s> PartialEq for Value<'s> {
  * (Not quite a rope at the moment) */
 
 #[derive(Debug)]
-pub enum Leaf<'s> {
+enum Leaf<'s> {
     Own(Value<'s>),
     Chr(Cow<'s, str>)
 }
 
-use Leaf::*;
+use self::Leaf::*;
 
 #[derive(Debug)]
 pub struct Rope<'s> {

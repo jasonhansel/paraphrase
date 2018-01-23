@@ -22,7 +22,7 @@ fn change_char<'s>(args: Vec<Value<'s>>) -> Value<'s> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, h))), None, ..) => {
             let needle = n.chars().next().unwrap();
-            let (mut rest, prefix) = h.split_at(true, &mut |ch| {
+            let (mut rest, prefix) = h.split_at(true, false, &mut |ch| {
                 ch == needle
             });
             rest.split_char(); // take the matched character out
