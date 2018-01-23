@@ -42,7 +42,7 @@ fn it_works() {
     // TODO: organize a real test suite
     let mut s = String::new();
     let mut chars = read_file(&mut s, "tests/1-simple.pp").unwrap();
-    let scope = Rc::new(default_scope());
+    let scope = Arc::new(default_scope());
     let results = new_expand(scope, chars);
     println!("||\n{}||", results.to_str().unwrap());
 }

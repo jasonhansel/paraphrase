@@ -2,15 +2,16 @@
 use value::*;
 use expand::*;
 
-use std::rc::Rc;
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
 use std::borrow::Cow;
 
+pub use std::sync::Arc;
+
 pub enum Command<'c> {
     Native(Box<for<'s> fn(Vec<Value<'s>>) -> Value<'s>>),
-    InOther(Rc<Scope<'c>>),
+    InOther(Arc<Scope<'c>>),
     User(Vec<String>, Rope<'c>)
 }
 
@@ -65,10 +66,10 @@ impl<'c> Scope<'c> {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
 
-    pub fn add_user<'s>(mut this: &mut Rc<Scope>, parts: Vec<CommandPart>,
+    pub fn add_user<'s>(mut this: &mut Arc<Scope>, parts: Vec<CommandPart>,
                         params: Vec<String>,
                         rope: Rope<'s>) {
-        Rc::get_mut(&mut this).unwrap()
+        Arc::get_mut(&mut this).unwrap()
             .commands
             .insert(parts, Command::User(params, rope.make_static()));
     }
@@ -79,7 +80,7 @@ impl<'c> Scope<'c> {
 }
 
 
-pub fn dup_scope<'s>(scope : &Rc<Scope<'static>>) -> Scope<'static> {
+pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
     let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new() };
@@ -94,7 +95,7 @@ pub fn dup_scope<'s>(scope : &Rc<Scope<'static>>) -> Scope<'static> {
 }
 
 
-pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
@@ -109,7 +110,7 @@ pub fn eval<'c, 'v>(cmd_scope: Rc<Scope<'static>>, command: Vec<CommandPart>, ar
              if arg_names.len() != args.len() {
                  panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
              }
-             let mut new_scope = Rc::new(new_scope);
+             let mut new_scope = Arc::new(new_scope);
              for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure

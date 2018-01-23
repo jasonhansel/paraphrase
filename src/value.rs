@@ -8,15 +8,17 @@ use expand::*;
 use std::collections::LinkedList;
 use std::iter;
 
+use std::sync::Arc;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
-pub struct ValueClosure<'s>(pub Rc<Scope<'static>>, pub Box<Rope<'s>>);
+pub struct ValueClosure<'s>(pub Arc<Scope<'static>>, pub Box<Rope<'s>>);
 
 impl<'s> ValueClosure<'s> {
-    fn from(scope: Rc<Scope<'static>>, rope: Rope<'s>) -> ValueClosure<'s> {
+    fn from(scope: Arc<Scope<'static>>, rope: Rope<'s>) -> ValueClosure<'s> {
         ValueClosure(scope, Box::new(rope))
     }
 }
@@ -146,10 +148,10 @@ impl<'s> Rope<'s> {
 use std::ptr;
 
 impl<'s> Value<'s> {
-    pub fn bubble(&self, scope: Rc<Scope>) -> Option<&Rope<'s>> {
+    pub fn bubble(&self, scope: Arc<Scope>) -> Option<&Rope<'s>> {
             if let &Value::Bubble(ref closure) = self {
                 let &ValueClosure(ref inner_scope, ref contents) = closure;
-                if Rc::ptr_eq(&inner_scope, &scope) {
+                if Arc::ptr_eq(&inner_scope, &scope) {
                     return Some(&**contents)
                 } else {
                     panic!("SAD BUBBLING"); // just a test
@@ -157,10 +159,10 @@ impl<'s> Value<'s> {
             }
         return None
     }
-    pub fn bubble_move(self, scope: Rc<Scope>) -> Option<Rope<'s>> {
+    pub fn bubble_move(self, scope: Arc<Scope>) -> Option<Rope<'s>> {
             if let Value::Bubble(closure) = self {
                 let ValueClosure(inner_scope, contents) = closure;
-                if Rc::ptr_eq(&inner_scope, &scope) {
+                if Arc::ptr_eq(&inner_scope, &scope) {
                     return Some(*contents)
                 } else {
                     panic!("SAD BUBBLING"); // just a test
@@ -212,23 +214,7 @@ impl<'s> Rope<'s> {
     pub fn from_str(value: Cow<'s, str>) -> Rope<'s> {
         Rope { data: iter::once(Leaf::Chr(value)).collect() }
     }
-    fn debubble<'t>(&mut self, scope: Rc<Scope<'static>>) {
-        for leaf in self.data.iter_mut() {
-             if let &mut Leaf::Own(ref mut v) = leaf {
-                let value = replace(v, Value::Str(Cow::from("")));
-                if let Bubble(closure) = value {
-                    let ValueClosure(inner_scope, contents) = closure.force_clone();
-                    if Rc::ptr_eq(&inner_scope, &scope) {
-                        replace(v, new_expand(scope.clone(), *contents ));
-                    } else {
-                        panic!("SAD BUBBLING"); // just a test
-                    }
-                } else {
-                    replace(v, value);
-                }
-            }
-        }
-    }
+
 
     pub fn concat(mut self, mut other: Rope<'s>) -> Rope<'s> {
         return Rope {
@@ -251,7 +237,42 @@ impl<'s> Rope<'s> {
         return true
     }
 
+    fn should_be_bubble_concat(&self, scope: Arc<Scope>) -> bool {
+        let mut count = 0;
+        let mut nothing_else = true;
+        let mut result = Rope::new();
+        for leaf in self.data.iter() {
+            match leaf {
+                &Leaf::Chr(ref c) => {
+                    if c.chars().any(|x| { !x.is_whitespace() }) { nothing_else = false; }
+                },
+                &Own(Bubble(ValueClosure(ref inner_scope, ref contents))) => {
+                    if Arc::ptr_eq(&inner_scope, &scope) {
+                        count += 1;
+                    } 
+                },
+                _ => { nothing_else = false; }
+            }
+        }
+        (!nothing_else && count == 1) || (count > 1)
+    }
 
+    fn to_bubble_rope(mut self) -> Rope<'s> {
+        let mut new_rope = Rope::new();
+        new_rope.data = self.data.into_iter().flat_map(|leaf| {
+            match leaf {
+                Own(Bubble(ValueClosure(inner_scope, contents))) => {
+                    contents.data
+                },
+                leaf => {
+                    let mut l = LinkedList::new();
+                    l.push_back(leaf);
+                    l
+                }
+            }
+        }).collect();
+        new_rope
+    }
 
     fn should_be_string(&self) -> bool {
         let mut count = 0;
@@ -267,7 +288,6 @@ impl<'s> Rope<'s> {
     pub fn to_str(&self) -> Option<Cow<'s, str>> {
         let mut has = true;
         let mut string : Cow<'s, str> = Cow::from("");
-        println!("STRINGIFYING {:?}", self);
         for v in self.data.iter() {
             match v.to_str() {
                 // TODO avoid copies
@@ -280,14 +300,33 @@ impl<'s> Rope<'s> {
         Some(string)
     }
 
-    pub fn coerce_bubble(mut self, scope: Rc<Scope<'static>>) -> Value<'s> {
-        self.debubble(scope);
-        self.coerce()
+    pub fn coerce_bubble(mut self, scope: Arc<Scope<'static>>) -> Value<'s> { 
+        if self.should_be_bubble_concat(scope.clone()) {
+            return new_expand(scope.clone(), self.to_bubble_rope());
+        } else if self.should_be_string() {
+            Value::Str( self.to_str().unwrap() )
+        } else {
+            for val in self.data.into_iter() { match val {
+                Chr(_) => { },
+                Own(value) => {
+                    return if let Bubble(closure) = value {
+                        let ValueClosure(inner_scope, contents) = closure;
+                        if Arc::ptr_eq(&inner_scope, &scope) {
+                            new_expand(scope.clone(), *contents )
+                        } else {
+                            Bubble(ValueClosure(inner_scope, contents))
+                        }
+                    } else {
+                        value
+                    }
+                }
+            } }
+            panic!("Failure");
+        }
     }
 
     pub fn coerce(self) -> Value<'s> {
        if self.should_be_string() {
-           println!("CHECKING {:?}", &self);
             Value::Str( self.to_str().unwrap() )
         } else {
             for val in self.data.into_iter() { match val {

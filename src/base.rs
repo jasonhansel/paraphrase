@@ -114,7 +114,7 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
                 }
             }
             // make_mut clones as nec.
-            let mut new_scope = Rc::new(dup_scope(&scope));
+            let mut new_scope = Arc::new(dup_scope(&scope));
             Scope::add_user(&mut new_scope, parts, params, *closure_data);
             // TODO avoid recursion
             new_expand(new_scope, *to_expand)

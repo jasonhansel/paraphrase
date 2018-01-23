@@ -2,6 +2,8 @@ use scope::*;
 use value::*;
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::thread::{spawn,JoinHandle};
+use std::sync::atomic::{AtomicUsize,Ordering};
 
 #[derive(Debug)]
 enum ParseEntry {
@@ -11,11 +13,11 @@ enum ParseEntry {
 
 pub trait TokenVisitor<'s, 't : 's> {
     fn start_command(&mut self, Cow<'s, str>);
-    fn end_command(&mut self, Vec<CommandPart>);
+    fn end_command(&mut self, Vec<CommandPart>, Arc<Scope<'static>>);
     fn start_paren(&mut self);
     fn end_paren(&mut self);
     fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, Rc<Scope<'static>>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
+    fn semi_param(&mut self, Arc<Scope<'static>>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
     fn text(&mut self, Rope<'s>);
     fn done(&mut self);
 }
@@ -26,8 +28,10 @@ enum Instr<'s> {
     Concat(u16),
     Call(u16, Vec<CommandPart>),
     Close(Rope<'s>),
+    Join(JoinHandle<Rope<'static>>),
     StartCmd
 }
+use self::Instr::*;
 
 struct Expander<'s> {
     calls: Vec<u16>,
@@ -39,20 +43,24 @@ struct Expander<'s> {
 
 // TODO think thru bubbling behavior a bit more
 
-fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope<'static>>) -> Rope<'s> {
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> Rope<'s> {
     let mut stack : Vec<Rope<'s>> = vec![];
-    println!("EXPANDING {:?}", instr);
     for i in instr.into_iter() { match i {
         Instr::StartCmd => {}
         Instr::Push(r) => { stack.push(r); },
+        Instr::Join(j) => {
+                        ACTIVE.fetch_sub(1,Ordering::SeqCst);
+            println!("ACTIVE {:?}", ACTIVE);
+            
+
+            stack.push(j.join().unwrap());
+                },
         Instr::Concat(cnt) => {
             let mut new_rope = Rope::new();
             let idx = stack.len() - cnt as usize;
             for item in stack.split_off(idx) {
-                println!("CONCATTING {:?}", item);
                 new_rope = new_rope.concat(item);
             }
-            println!("POSTCONC {:?}", new_rope);
             stack.push(
                 new_rope
             );
@@ -61,7 +69,6 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Rc<Scope<'static>>) -> Rope<'s> {
             let stat = r;
             let v = 
             Rope::from_value(  Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ) ;
-            println!("CLOSING {:?}", v);
             stack.push(
                 v
             );
@@ -92,28 +99,61 @@ impl<'s> Expander<'s> {
             instr: vec![]
         }
     }
-    fn do_expand(self, scope: Rc<Scope<'static>>) -> Rope<'s> {
+    fn do_expand(self, scope: Arc<Scope<'static>>) -> Rope<'s> {
         do_expand(self.instr, scope)
     }
 }
 
 impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     fn start_command(&mut self, _: Cow<'s, str>) {
-        println!("START CMD");
         self.instr.push(Instr::StartCmd);
         self.calls.push(0);
     }
-    fn end_command(&mut self, cmd: Vec<CommandPart>) {
+    fn end_command(&mut self, cmd: Vec<CommandPart>, scope: Arc<Scope<'static>>) {
         if let Some(l) = self.parens.last_mut() { *l += 1; }
         self.instr.push(Instr::Call(self.calls.pop().unwrap(), cmd));
+
+        if self.calls.len() == 0 {
+            let mut idx = self.instr.len() - 2;
+            let mut level = 1;
+
+            loop {
+                if let Instr::StartCmd = self.instr[idx] {
+                    level -= 1;
+                    if level == 0 { break; }
+                } else if let Instr::Call(_,_) = self.instr[idx] {
+                    level += 1;
+                }
+                idx -= 1;
+            }
+            let to_run = self.instr.split_off(idx);
+            // TODO let ropes use Arc internally
+            let mut static_run : Vec<Instr<'static>> = vec![];
+            for val in to_run.into_iter() {
+                static_run.push(match val {
+                    Push(r) =>  { Push(r.make_static()) }
+                    Concat(u) => { Concat(u) }
+                    Call(u, cp) => { Call(u, cp) }
+                    Close(r) => { Close(r.make_static()) }
+                    Join(j) => { panic!("Invalid join") }
+                    StartCmd => { StartCmd }
+                });
+            }
+            ACTIVE.fetch_add(1,Ordering::SeqCst);
+            println!("ACTIVE {:?}", ACTIVE);
+            let join = spawn(move || {
+                do_expand(static_run, scope)
+            });
+            self.instr.push(Instr::Join(join));
+
+        }
+
     }
     fn start_paren(&mut self) {
-        println!("START PAR");
         self.parens.push(0);
     }
     fn end_paren(&mut self) {
         *( self.calls.last_mut().unwrap() ) += 1;
-        println!("END PAR");
         let num = self.parens.pop().unwrap();
         if num != 1 {
             self.instr.push(Instr::Concat(num));
@@ -123,7 +163,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         *( self.calls.last_mut().unwrap() ) += 1;
         self.instr.push(Instr::Close(rope));
     }
-    fn semi_param(&mut self, scope: Rc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
+    fn semi_param(&mut self, scope: Arc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
         let mut idx = self.instr.len() - 1;
         let mut level = 1;
 
@@ -160,12 +200,10 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
     }
     fn text(&mut self, rope: Rope<'s>) {
         if let Some(l) = self.parens.last_mut() { *l += 1; }
-        println!("TXT {:?}", rope);
         self.instr.push(Instr::Push(rope));
     }
     fn done(&mut self) {
         self.instr.push(Instr::Concat(self.parens.pop().unwrap()));
-        println!("COMPILED {:?}", self.instr);
         if self.calls.len() > 0 || self.parens.len() > 0 {
             panic!("Unbalanced {:?} {:?}", self.calls, self.parens);
         }
@@ -173,12 +211,15 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
 }
 
 
+static ACTIVE : AtomicUsize = AtomicUsize::new(0);
+
+
 
 // TODO fix perf - rem compile optimized, stop storing characters separately
-// TODO note: can't parse closures in advance because of Rescope
+/// TODO note: can't parse closures in advance because of Rescope
 // TODO: allow includes - will be tricky to avoid copying owned characters around
 fn parse<'f, 'r, 's : 'r>(
-    scope: Rc<Scope<'static>>,
+    scope: Arc<Scope<'static>>,
     mut rope: Rope<'s>,
     visitor: &mut TokenVisitor<'s,'s>
 ) {
@@ -190,13 +231,20 @@ fn parse<'f, 'r, 's : 'r>(
             // TODO: multi-part commands, variadic macros (may never impl - too error prone)
             // TODO: breaks intermacro text
             if scope.has_command(&parts) {
-                println!("COMMAND DONE {:?}", parts);
-                visitor.end_command(parts.split_off(0));
+                visitor.end_command(parts.split_off(0), scope.clone());
                 // continue to next work item
-            } else if parts.len() == 0 {
-                println!("HERE");
+            } /*else if parts.len() == 0 {
+
+                // Character types:
+                // Word (alpha, _)
+                // Whitespace
+                // Sigil
+                // Text
+                // Parens: (, )
+                // RawParens: {, } <- parser balances explicitly
+                // Semicolon
+
                 let (r, ident) = rope.split_at(false, &mut |chr : char| {
-                    println!("CHECKING {:?}", chr);
                     if chr.is_alphabetic() || chr == '_' || chr == scope.sigil {
                         // dumb check for sigil /here
                         false
@@ -219,7 +267,7 @@ fn parse<'f, 'r, 's : 'r>(
                     rope = Rope::new();
                 }
 
-            } else {
+            }*/ else {
                 let (r, _) = rope.split_at(false, &mut |ch : char| {
                     if ch.is_whitespace() {
                         return false;
@@ -228,9 +276,30 @@ fn parse<'f, 'r, 's : 'r>(
                     }
                 });
                 rope = r;
-
                 let chr = rope.split_char().unwrap();
-                if chr == '(' {
+                if chr == scope.sigil {
+                    let (r, ident) = rope.split_at(false, &mut |chr : char| {
+                        if chr.is_alphabetic() || chr == '_' {
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    rope = r;
+
+                    if let Some(mut id) = ident {
+                        id.split_char(); // get rid of sigil
+                        parts.push(Ident( id.to_str().unwrap().into_owned() ));
+                        visitor.start_command(id.to_str().unwrap());
+                        stack.push(ParseEntry::Command(parts));
+                    } else {
+                        rope.split_char(); // get rid of sigil
+                        parts.push(Ident( rope.to_str().unwrap().into_owned() ));
+                        visitor.start_command(rope.to_str().unwrap());
+                        stack.push(ParseEntry::Command(parts));
+                        rope = Rope::new();
+                    }
+                } else if chr == '(' {
                     visitor.start_paren();
                     stack.push(ParseEntry::Command(parts));
                     stack.push(ParseEntry::Text(0, true));
@@ -248,7 +317,6 @@ fn parse<'f, 'r, 's : 'r>(
                 } else if chr == '{' {
                     let mut raw_level = 1;
                     let (r, param) = rope.split_at(true, &mut |ch| { 
-                        println!("RAW {:?} {:?}", ch, raw_level);
                         raw_level += match ch {
                             '{' => 1,
                             '}' => -1,
@@ -269,7 +337,6 @@ fn parse<'f, 'r, 's : 'r>(
         ParseEntry::Text(mut paren_level, in_call) => {
             // TODO make more things (e.g. sigil character) customizable
             let (r, prefix) = rope.split_at(true, &mut |x| { 
-                println!("SCAN {:?}", x);
                 match x{
                     '(' => {
                         paren_level += 1;
@@ -321,7 +388,7 @@ fn parse<'f, 'r, 's : 'r>(
 
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f>(scope: Rc<Scope<'static>>, tokens: Rope<'f>) -> Value<'f> {
+pub fn new_expand<'f>(scope: Arc<Scope<'static>>, tokens: Rope<'f>) -> Value<'f> {
     let mut expander = Expander::new();
     parse(scope.clone(), tokens, &mut expander);
     expander.do_expand(scope.clone()).coerce_bubble(scope.clone())
