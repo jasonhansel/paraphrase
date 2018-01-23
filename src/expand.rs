@@ -230,45 +230,12 @@ fn parse<'f, 'r, 's : 'r>(
         ParseEntry::Command(mut parts) => {
             // TODO: multi-part commands, variadic macros (may never impl - too error prone)
             // TODO: breaks intermacro text
+            println!("CHECKING {:?}", parts);
             if scope.has_command(&parts) {
                 visitor.end_command(parts.split_off(0), scope.clone());
                 // continue to next work item
-            } /*else if parts.len() == 0 {
-
-                // Character types:
-                // Word (alpha, _)
-                // Whitespace
-                // Sigil
-                // Text
-                // Parens: (, )
-                // RawParens: {, } <- parser balances explicitly
-                // Semicolon
-
-                let (r, ident) = rope.split_at(false, &mut |chr : char| {
-                    if chr.is_alphabetic() || chr == '_' || chr == scope.sigil {
-                        // dumb check for sigil /here
-                        false
-                    } else {
-                        true
-                    }
-                });
-                rope = r;
-
-                if let Some(mut id) = ident {
-                    id.split_char(); // get rid of sigil
-                    parts.push(Ident( id.to_str().unwrap().into_owned() ));
-                    visitor.start_command(id.to_str().unwrap());
-                    stack.push(ParseEntry::Command(parts));
-                } else {
-                    rope.split_char(); // get rid of sigil
-                    parts.push(Ident( rope.to_str().unwrap().into_owned() ));
-                    visitor.start_command(rope.to_str().unwrap());
-                    stack.push(ParseEntry::Command(parts));
-                    rope = Rope::new();
-                }
-
-            }*/ else {
-                let (r, _) = rope.split_at(false, &mut |ch : char| {
+            }  else {
+                let (r, _) = rope.split_at(false, false, &mut |ch : char| {
                     if ch.is_whitespace() {
                         return false;
                     } else {
@@ -278,32 +245,26 @@ fn parse<'f, 'r, 's : 'r>(
                 rope = r;
                 let chr = rope.split_char().unwrap();
                 if chr == scope.sigil {
-                    let (r, ident) = rope.split_at(false, &mut |chr : char| {
+                    let (r, ident) = rope.split_at(false, true, &mut |chr : char| {
                         if chr.is_alphabetic() || chr == '_' {
                             false
                         } else {
                             true
                         }
                     });
+                    let Some(mut id) = ident.unwrap();
+                    println!("REST {:?} {:?}", r, ident);
                     rope = r;
-
-                    if let Some(mut id) = ident {
-                        id.split_char(); // get rid of sigil
-                        parts.push(Ident( id.to_str().unwrap().into_owned() ));
-                        visitor.start_command(id.to_str().unwrap());
-                        stack.push(ParseEntry::Command(parts));
-                    } else {
-                        rope.split_char(); // get rid of sigil
-                        parts.push(Ident( rope.to_str().unwrap().into_owned() ));
-                        visitor.start_command(rope.to_str().unwrap());
-                        stack.push(ParseEntry::Command(parts));
-                        rope = Rope::new();
-                    }
-                } else if chr == '(' {
+                    parts.push(Ident( id.to_str().unwrap().into_owned() ));
+                    visitor.start_command(id.to_str().unwrap());
+                    stack.push(ParseEntry::Command(parts));
+               } else if chr == '(' {
                     visitor.start_paren();
                     stack.push(ParseEntry::Command(parts));
                     stack.push(ParseEntry::Text(0, true));
                 } else if chr == ')' {
+
+                    println!("HERE {:?} {:?} {:?}", parts, stack, rope);
                     visitor.end_paren();
                     parts.push(Param);
                     stack.push(ParseEntry::Command(parts));
@@ -311,12 +272,13 @@ fn parse<'f, 'r, 's : 'r>(
                     parts.push(Param);
                     // TODO get this working better
                     if !scope.has_command(&parts) {
+
                         panic!("Invalid semicolon");
                     }
                     rope = visitor.semi_param(scope.clone(), rope, parts.split_off(0));
                 } else if chr == '{' {
                     let mut raw_level = 1;
-                    let (r, param) = rope.split_at(true, &mut |ch| { 
+                    let (r, param) = rope.split_at(true, false, &mut |ch| { 
                         raw_level += match ch {
                             '{' => 1,
                             '}' => -1,
@@ -336,7 +298,7 @@ fn parse<'f, 'r, 's : 'r>(
         },
         ParseEntry::Text(mut paren_level, in_call) => {
             // TODO make more things (e.g. sigil character) customizable
-            let (r, prefix) = rope.split_at(true, &mut |x| { 
+            let (r, prefix) = rope.split_at(true, true, &mut |x| { 
                 match x{
                     '(' => {
                         paren_level += 1;
@@ -361,24 +323,21 @@ fn parse<'f, 'r, 's : 'r>(
                     }
                 } });
             rope = r;
-            if let Some(p) = prefix {
-                visitor.text(p);
-            
-                match rope.get_char() {
-                    Some(')') => {
-                    },
-                    Some(x) => {
-                        if x != scope.sigil { panic!("Unexpected halt at: {:?}", x); }
-                        stack.push(ParseEntry::Text(paren_level, in_call));
-                        stack.push(ParseEntry::Command(vec![]));
-                    },
-                    None => {
-                    }
+            let Some(p) = prefix.unwrap();
+            visitor.text(p);
+        
+            match rope.get_char() {
+                Some(')') => {
+                },
+                Some(x) => {
+                    if x != scope.sigil { panic!("Unexpected halt at: {:?}", x); }
+                    stack.push(ParseEntry::Text(paren_level, in_call));
+                    stack.push(ParseEntry::Command(vec![]));
+                },
+                None => {
                 }
-            } else {
-                visitor.text(rope);
-                break;
             }
+
         }
     } }
     visitor.done()

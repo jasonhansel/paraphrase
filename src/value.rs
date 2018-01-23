@@ -337,7 +337,7 @@ impl<'s> Rope<'s> {
        }
     }
         // may want to make this stuff iterative
-    pub fn split_at<F : FnMut(char) -> bool>(mut self, match_val : bool, matcher: &mut F)
+    pub fn split_at<F : FnMut(char) -> bool>(mut self, match_val : bool, match_eof: bool, matcher: &mut F)
         -> (Rope<'s>, Option<Rope<'s>>)  {
         // TODO can optimize the below. would vecs be faster than linked lists?
         let mut prefix = Rope { data: LinkedList::new() };
@@ -396,7 +396,11 @@ impl<'s> Rope<'s> {
                 prefix.data.push_back(self.data.pop_front().unwrap());
             }
         }
-        return (prefix, None)
+        if match_eof {
+            return (self  ,Some(prefix))
+        } else {
+            return (prefix, None)
+        }
     }
 
     pub fn get_char(&self) -> Option<char> {
