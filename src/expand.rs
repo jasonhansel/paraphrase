@@ -4,6 +4,55 @@ use std::borrow::Cow;
 use std::rc::Rc;
 use std::thread::{spawn,JoinHandle};
 use std::sync::atomic::{AtomicUsize,Ordering};
+use futures_cpupool::{CpuFuture, CpuPool};
+use futures::future::{Loop,loop_fn};
+use futures::prelude::*;
+use futures::future::{Future,FutureResult};
+
+
+pub enum ExpandState<'s> {
+    Parse( Arc<Scope<'static>>, Rope<'s>),
+    Done( Rope<'s>)
+}
+use ExpandState::*;
+
+
+
+impl<'s> ExpandState<'s> {
+
+
+    fn proceed(self, pool: CpuPool, until: Option<Arc<Scope<'static>>>) -> (Vec<FutureResult<Rope<'static>>>, Loop<Rope<'s>, ExpandState<'s>>) {
+       match self {
+            Run(joins, scope, instr) => {
+                let mut expanded = do_expand(scope, instr);
+                return (vec![], expanded);
+            },
+            Parse(joins, scope, rest) => {
+                if let Some(u) = until { if Arc::ptr_eq(&scope, &u) {
+                    return Loop::Break(
+                        joins
+                        .into_iter()
+                        .map(|x| { x.wait().unwrap() })
+                        .fold(Rope::new(), |x, y| { x.concat(y) })
+                        .concat(rest)
+                    )
+                } }
+                let exp = Expander::new(pool, scope);
+                parse(scope.clone(), tokens, &mut expander);
+                joins.concat(exp.joins);
+                Loop::Continue(Run(joins, scope, exp.instr))
+            },
+            Done(joins) => {
+                Loop::Break(
+                    joins
+                    .into_iter()
+                    .map(|x| { x.wait().unwrap() })
+                    .fold(Rope::new(), |x, y| { x.concat(y) })
+                )
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 enum ParseEntry {
@@ -28,7 +77,6 @@ enum Instr<'s> {
     Concat(u16),
     Call(u16, Vec<CommandPart>),
     Close(Rope<'s>),
-    Join(JoinHandle<Rope<'static>>),
     StartCmd
 }
 use self::Instr::*;
@@ -36,25 +84,29 @@ use self::Instr::*;
 struct Expander<'s> {
     calls: Vec<u16>,
     parens: Vec<u16>,
-    instr: Vec<Instr<'s>>
+    joins: Vec<FutureResult<Rope<'s>,()>>,
+    instr: Vec<Instr<'s>>,
+    pool: CpuPool,
+    scope: Arc<Scope<'static>>
 }
 
 // are ropes stil necessary? basically just using them as linked lists now, I think
 
 // TODO think thru bubbling behavior a bit more
 
-fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> Rope<'s> {
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> ExpandState<'s> {
     let mut stack : Vec<Rope<'s>> = vec![];
+    match instr.pop() {
+        Instr::Concat(_) => {},
+        _ => { panic!() }
+    }
+    let cmd = match instr.pop() {
+        Instr::Call(_, cmd) => { cmd },
+        _ => { panic!() }
+    };
     for i in instr.into_iter() { match i {
         Instr::StartCmd => {}
         Instr::Push(r) => { stack.push(r); },
-        Instr::Join(j) => {
-                        ACTIVE.fetch_sub(1,Ordering::SeqCst);
-            println!("ACTIVE {:?}", ACTIVE);
-            
-
-            stack.push(j.join().unwrap());
-                },
         Instr::Concat(cnt) => {
             let mut new_rope = Rope::new();
             let idx = stack.len() - cnt as usize;
@@ -85,38 +137,25 @@ fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> Rope<'s> 
         }
 
     } }
-    if stack.len() != 1 {
-        panic!("Wrong stack size!");
-    }
-    stack.remove(0)
+    return eval(scope.clone(), cmd, stack);
 }
 
-impl<'s> Expander<'s> {
-    fn new() -> Expander<'s> {
+impl<'s,'c> Expander<'s> {
+    fn new(pool: CpuPool, scope: Arc<Scope<'static>>) -> Expander<'s> {
         Expander {
             parens: vec![0],
             calls: vec![],
-            instr: vec![]
+            instr: vec![],
+            joins: vec![],
+            pool: pool,
+            scope: scope
         }
     }
-    fn do_expand(self, scope: Arc<Scope<'static>>) -> Rope<'s> {
-        do_expand(self.instr, scope)
-    }
-}
 
-impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
-    fn start_command(&mut self, _: Cow<'s, str>) {
-        self.instr.push(Instr::StartCmd);
-        self.calls.push(0);
-    }
-    fn end_command(&mut self, cmd: Vec<CommandPart>, scope: Arc<Scope<'static>>) {
-        if let Some(l) = self.parens.last_mut() { *l += 1; }
-        self.instr.push(Instr::Call(self.calls.pop().unwrap(), cmd));
-
+    fn handle_call(&mut self, is_last: bool) {
         if self.calls.len() == 0 {
-            let mut idx = self.instr.len() - 2;
-            let mut level = 1;
-
+            let mut idx = self.instr.len() - 1;
+            let mut level = 0;
             loop {
                 if let Instr::StartCmd = self.instr[idx] {
                     level -= 1;
@@ -127,7 +166,8 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
                 idx -= 1;
             }
             let to_run = self.instr.split_off(idx);
-            // TODO let ropes use Arc internally
+            // TODO let ropes use Cow<Arc> internally
+            // FIXME should avoid spawning too many threads
             let mut static_run : Vec<Instr<'static>> = vec![];
             for val in to_run.into_iter() {
                 static_run.push(match val {
@@ -135,19 +175,27 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
                     Concat(u) => { Concat(u) }
                     Call(u, cp) => { Call(u, cp) }
                     Close(r) => { Close(r.make_static()) }
-                    Join(j) => { panic!("Invalid join") }
                     StartCmd => { StartCmd }
                 });
             }
             ACTIVE.fetch_add(1,Ordering::SeqCst);
-            println!("ACTIVE {:?}", ACTIVE);
-            let join = spawn(move || {
-                do_expand(static_run, scope)
+            let join = self.pool.spawn_fn(|| {
+                do_expand(vec![], static_run, self.scope)
             });
-            self.instr.push(Instr::Join(join));
-
+            self.joins.push(join);
         }
+    }
+}
 
+impl<'s,'t:'s,'c> TokenVisitor<'s, 't> for Expander<'s> {
+    fn start_command(&mut self, _: Cow<'s, str>) {
+        self.handle_call(false);
+        self.instr.push(Instr::StartCmd);
+        self.calls.push(0);
+    }
+    fn end_command(&mut self, cmd: Vec<CommandPart>, scope: Arc<Scope<'static>>) {
+        if let Some(l) = self.parens.last_mut() { *l += 1; }
+        self.instr.push(Instr::Call(self.calls.pop().unwrap(), cmd));
     }
     fn start_paren(&mut self) {
         self.parens.push(0);
@@ -164,38 +212,18 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         self.instr.push(Instr::Close(rope));
     }
     fn semi_param(&mut self, scope: Arc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
-        let mut idx = self.instr.len() - 1;
-        let mut level = 1;
-
-        loop {
-            if let Instr::StartCmd = self.instr[idx] {
-                level -= 1;
-                if level == 0 { break; }
-            } else if let Instr::Call(_,_) = self.instr[idx] {
-                level += 1;
-            }
-            idx -= 1;
-        }
+        let mut idx = 0;
         // TODO: excessive recursion here
 
         self.instr.push(Instr::Close(rope));
         self.instr.push(Instr::Call(self.calls.pop().unwrap() + 1, parts));
 
-
-        if self.calls.len() > 0 {
-            let file = self.instr.split_off(idx);
-            // TODO: if there are no calls in progress, this should be the same
-            // as the old raw_param behavior.
-            let result = do_expand(file, scope.clone()).coerce();
-            if let Some(bubble) = result.bubble_move(scope) {
-                return bubble
-            } else {
-                panic!("Hit an in-call semiparameter, but wasn't a bubble");
+        let mut new_state = ExpandState::Run(self.joins, scope, self.instr);
+        loop {
+            match new_state.proceed(self.pool, Some(scope)) {
+                Loop::Continue(s) => { new_state = s },
+                Loop::Break(s) => { return s }
             }
-        } else {
-            if let Some(l) = self.parens.last_mut() { *l += 1; }
-           // we can just finish the call
-            return Rope::new()
         }
     }
     fn text(&mut self, rope: Rope<'s>) {
@@ -203,10 +231,6 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         self.instr.push(Instr::Push(rope));
     }
     fn done(&mut self) {
-        self.instr.push(Instr::Concat(self.parens.pop().unwrap()));
-        if self.calls.len() > 0 || self.parens.len() > 0 {
-            panic!("Unbalanced {:?} {:?}", self.calls, self.parens);
-        }
     }
 }
 
@@ -346,8 +370,9 @@ fn parse<'f, 'r, 's : 'r>(
 
 
 // TODO: make sure user can define their own bubble-related fns.
-pub fn new_expand<'f>(scope: Arc<Scope<'static>>, tokens: Rope<'f>) -> Value<'f> {
-    let mut expander = Expander::new();
-    parse(scope.clone(), tokens, &mut expander);
-    expander.do_expand(scope.clone()).coerce_bubble(scope.clone())
+pub fn expand_with_pool<'f>(pool: CpuPool, s: Arc<Scope<'static>>, t: Rope<'static>) -> CpuFuture<Value<'static>,()> {
+    pool.spawn_fn(move || { future::loop_fn( ExpandState::Parse(vec![],s.clone(),t), |x| {
+        x.proceed(None)
+    })
 }
+

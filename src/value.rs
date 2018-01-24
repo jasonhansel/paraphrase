@@ -362,7 +362,8 @@ impl<'s> Rope<'s> {
 
     pub fn coerce_bubble(mut self, scope: Arc<Scope<'static>>) -> Value<'s> { 
         if self.should_be_bubble_concat(scope.clone()) {
-            return new_expand(scope.clone(), self.to_bubble_rope());
+            panic!("BUBBLE!");
+            /* return new_expand(scope.clone(), self.to_bubble_rope()); */
         } else if self.should_be_string() {
             Value::Str( self.to_str().unwrap() )
         } else {
@@ -372,7 +373,8 @@ impl<'s> Rope<'s> {
                     return if let Bubble(closure) = value {
                         let ValueClosure(inner_scope, contents) = closure;
                         if Arc::ptr_eq(&inner_scope, &scope) {
-                            new_expand(scope.clone(), *contents )
+                            panic!("BUBBLE");
+                            /* new_expand(scope.clone(), *contents ) */
                         } else {
                             Bubble(ValueClosure(inner_scope, contents))
                         }
