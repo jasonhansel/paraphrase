@@ -97,11 +97,15 @@ fn define<'s>(args: Vec<Value<'s>>) -> Value<'s> {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
        Some(Closure(ValueClosure(_, to_expand))), None, ..) => {
+
+            if name_args.is_empty() {
+                panic!("Empty define");
+            }
             // TODO: custom arguments, more tests
             let mut parts = vec![];
             let mut params = vec![];
             let na_str = name_args;
-            for part in na_str.to_str().split(' ') {
+            for part in na_str.split(' ') {
                 if part.starts_with(':') {
                     parts.push(Param);
                     params.push((&part[1..]).to_owned());
