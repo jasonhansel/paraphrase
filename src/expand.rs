@@ -4,25 +4,20 @@ use std::borrow::Cow;
 use std::rc::Rc;
 use std::thread::{spawn,JoinHandle};
 use std::sync::atomic::{AtomicUsize,Ordering};
-use futures::prelude::*;
-use futures::future;
-use futures::future::*;
-use futures_cpupool::{CpuFuture,CpuPool};
 
 #[derive(Debug)]
 enum ParseEntry {
     Text(u8, bool), // bool is true if in a call
     Command(Vec<CommandPart>)
 }
-type Fut<T> = Box<Future<Item=T,Error=()>>;
 
 pub trait TokenVisitor<'s, 't : 's> {
-    fn start_command(&mut self, String);
+    fn start_command(&mut self, Cow<'s, str>);
     fn end_command(&mut self, Vec<CommandPart>, Arc<Scope<'static>>);
     fn start_paren(&mut self);
     fn end_paren(&mut self);
     fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, Arc<Scope<'static>>, Rope<'s>, Vec<CommandPart>)   -> Box<Future<Item=Rope<'s>,Error=()>> ;
+    fn semi_param(&mut self, Arc<Scope<'static>>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
     fn text(&mut self, Rope<'s>);
     fn done(&mut self);
 }
@@ -41,32 +36,25 @@ use self::Instr::*;
 struct Expander<'s> {
     calls: Vec<u16>,
     parens: Vec<u16>,
-    instr: Vec<Instr<'s>>,
-    pool: CpuPool,
-    scope: Arc<Scope<'static>>,
-    joins: Vec<Box<Future<Item=Rope<'static>,Error=()>>>,
-    has_call: bool
+    instr: Vec<Instr<'s>>
 }
 
 // are ropes stil necessary? basically just using them as linked lists now, I think
 
 // TODO think thru bubbling behavior a bit more
 
-fn do_expand<'s>(pool: CpuPool, mut instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> Box<Future<Item=Value<'s>,Error=()>> {
+fn do_expand<'s>(instr: Vec<Instr<'s>>, scope: Arc<Scope<'static>>) -> Rope<'s> {
     let mut stack : Vec<Rope<'s>> = vec![];
-    let start = future::join_all( joins );
-    let bal = 0;
-    println!("INSTR START");
-    for let Some(i) = instr.pop_front() {  match i {
-        Instr::StartCmd => {bal += 1;}
+    for i in instr.into_iter() { match i {
+        Instr::StartCmd => {}
         Instr::Push(r) => { stack.push(r); },
         Instr::Join(j) => {
-            ACTIVE.fetch_sub(1,Ordering::SeqCst);
+                        ACTIVE.fetch_sub(1,Ordering::SeqCst);
             println!("ACTIVE {:?}", ACTIVE);
+            
 
-            stack.push(j.wait().unwrap());
-            println!("DONEJOIN");
-        },
+            stack.push(j.join().unwrap());
+                },
         Instr::Concat(cnt) => {
             let mut new_rope = Rope::new();
             let idx = stack.len() - cnt as usize;
@@ -204,7 +192,7 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         *( self.calls.last_mut().unwrap() ) += 1;
         self.instr.push(Instr::Close(rope));
     }
-    fn semi_param(&mut self, scope: Arc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>)  -> Box<Future<Item=Rope<'s>,Error=()>> {
+    fn semi_param(&mut self, scope: Arc<Scope<'static>>, rope: Rope<'s>, parts: Vec<CommandPart>) -> Rope<'s> {
         let mut idx = self.instr.len() - 1;
         let mut level = 1;
 
@@ -222,13 +210,12 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
         self.instr.push(Instr::Close(rope));
         self.instr.push(Instr::Call(self.calls.pop().unwrap() + 1, parts));
 
-        // TODO: preserve parse tree
-        do_expand(self.joins, self.pool.clone(), self.instr, scope.clone())
-        /*
+
         if self.calls.len() > 0 {
             let file = self.instr.split_off(idx);
             // TODO: if there are no calls in progress, this should be the same
             // as the old raw_param behavior.
+            let result = do_expand(file, scope.clone()).coerce();
             if let Some(bubble) = result.bubble_move(scope) {
                 return bubble
             } else {
@@ -239,7 +226,6 @@ impl<'s,'t:'s> TokenVisitor<'s, 't> for Expander<'s> {
            // we can just finish the call
             return Rope::new()
         }
-        */
     }
     fn text(&mut self, rope: Rope<'s>) {
         if let Some(l) = self.parens.last_mut() { *l += 1; }
@@ -311,11 +297,10 @@ fn parse<'f, 'r, 's : 'r>(
 
                         panic!("Invalid semicolon");
                     }
-                    let lex = visitor.semi_param(scope.clone(), rope.make_static(), parts.split_off(0));
-                    return Some((stack, lex.0, lex.1);
+                    rope = visitor.semi_param(scope.clone(), rope, parts.split_off(0));
                 } else if chr == '{' {
                     let mut raw_level = 1;
-                    let param = rope.split_at(true, false, &mut |ch| { 
+                    let (r, param) = rope.split_at(true, false, &mut |ch| { 
                         raw_level += match ch {
                             '{' => 1,
                             '}' => -1,

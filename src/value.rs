@@ -385,40 +385,9 @@ impl<'s> Rope<'s> {
         Some(string)
     }
 
-    pub fn into_string(self) -> Option<String> {
-        self.to_str().map(|x| { x.to_string() })
-    }
-
-    pub fn coerce_str(mut self, scope: Arc<Scope<'static>>) -> Option<String> {
-        if self.should_be_bubble_concat(scope.clone()) {
-            panic!("BUBBLE");
-        //            return new_expand(scope.clone(), self.to_bubble_rope());
-        } else {
-            /*
-            for val in self.data.iter() { match val {
-                Chr(_) => { },
-                Own(value) => {
-                    if let Bubble(closure) = value {
-                        let ValueClosure(inner_scope, contents) = closure;
-                        if Arc::ptr_eq(&inner_scope, &scope) {
-                            panic!("BUBBLE");
-        //                           new_expand(scope.clone(), *contents )
-                        } else {
-                        }
-                    } else {
-                    }
-                }
-            } }
-            */
-        }
-
-        self.into_string()
-    }
-
     pub fn coerce_bubble(mut self, scope: Arc<Scope<'static>>) -> Value<'s> { 
         if self.should_be_bubble_concat(scope.clone()) {
-            panic!("BUBBLE");
-//            return new_expand(scope.clone(), self.to_bubble_rope());
+            return new_expand(scope.clone(), self.to_bubble_rope());
         } else if self.should_be_string() {
             Value::Str( self.to_str().unwrap() )
         } else {
@@ -428,8 +397,7 @@ impl<'s> Rope<'s> {
                     return if let Bubble(closure) = value {
                         let ValueClosure(inner_scope, contents) = closure;
                         if Arc::ptr_eq(&inner_scope, &scope) {
-                            panic!("BUBBLE");
- //                           new_expand(scope.clone(), *contents )
+                            new_expand(scope.clone(), *contents )
                         } else {
                             Bubble(ValueClosure(inner_scope, contents))
                         }

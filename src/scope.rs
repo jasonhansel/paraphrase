@@ -71,14 +71,14 @@ impl<'c> Scope<'c> {
     }
 
     pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
-        for<'s> fn(Vec<Value<'s>>) -> NativeResult<'s>
+        for<'s> fn(Vec<Value<'s>>) -> Value<'s>
     ) {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
 
     pub fn add_user<'s>(mut this: &mut Arc<Scope>, parts: Vec<CommandPart>,
                         params: Vec<String>,
-                        mut rope: Rope<'s>) {
+                        rope: Rope<'s>) {
         Arc::get_mut(&mut this).unwrap()
             .commands
             .insert(parts, Command::User(params, rope.make_static()));
@@ -104,37 +104,16 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     stat
 }
 
-#[derive(Debug)]
-pub enum NativeResult<'v> {
-    Continue(Rope<'v>, Arc<Scope<'static>>, Rope<'v>),
-    Done(Value<'v>)
-}
 
-
-
-pub fn eval<'c, 'v>(pool: CpuPool, cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Box<Future<Item=Value<'v>,Error=()>>  {
-    println!("WANT EVAL");
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
-             println!("INOTHER");
-
-            eval( pool, other_scope.clone(), command, args)
+            eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
-             match code(args) {
-                NativeResult::Continue(mut vals, scope, mut rope) => {
-                    println!("NATIVE CONTINUATION");
-                     Box::new( expand_with_pool(pool, vals.make_static(), scope.clone(), rope.make_static()).map(|x| { x.coerce_bubble(scope) }) )
-                },
-                NativeResult::Done(mut val) => {
-                    println!("NATIVE DONE");
-                    let newv = val.make_static();
-                    Box::new( Box::new(future::ok(1)).map(|_| { newv }) )
-                }
-            }
+             code(args)
          },
          &Command::User(ref arg_names, ref contents) => {
-             println!("USER RUN");
              // todo handle args
              //clone() scope?
              let mut new_scope = dup_scope(&cmd_scope);
@@ -148,15 +127,9 @@ pub fn eval<'c, 'v>(pool: CpuPool, cmd_scope: Arc<Scope<'static>>, command: Vec<
                  // or a Tagged). coerce sometimes?
                 Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg));
              }
-             println!("GETTING THERE");
-             let nsc = new_scope.clone();
-             let ncc = contents.clone();
-             println!("GOT HERE");
-             let result = Box::new( expand_with_pool(pool, Rope::new(), nsc, ncc).map(|x| {
-                 x.coerce()
-             }) );
-             println!("USER DONE");
-             return result
+
+             let out = new_expand(new_scope, contents.dupe()).make_static();
+             out
          }
      }
 }
