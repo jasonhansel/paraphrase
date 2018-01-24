@@ -34,23 +34,25 @@ use value::*;
 use base::*;
 use expand::*;
 
-fn read_file<'s>(mut string: &'s mut String, path: &str) -> Result<Rope<'s>, Error> {
-    println!("Reading...");
+fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
     std::io::stdout().flush().unwrap();
     let mut file = File::open(path)?;
-    file.read_to_string(string)?;
-    Ok(Rope::from_str(Cow::Borrowed(&string[..])))
+    file.read_to_string(&mut string)?;
+    Ok(Rope::from_slice(ArcSlice::from_string( string )))
 }
 
 #[test]
 fn it_works() {
     // TODO: organize a real test suite
-    let mut s = String::new();
-    let mut chars = read_file(&mut s, "tests/1-simple.pp").unwrap();
+    let mut chars = read_file(String::new(), "tests/1-simple.pp").unwrap();
     let scope = Arc::new(default_scope());
     let pool = CpuPool::new_num_cpus();
-    let results = expand_with_pool(pool, scope, chars).wait().unwrap();
-    println!("||\n{}||", results.to_str().unwrap());
+    let results = expand_with_pool(pool, Rope::new(), scope.clone(), chars)
+        .wait()
+        .unwrap()
+        .coerce_str(scope)
+        .unwrap();
+    println!("||\n{}||", results.to_string() );
 }
 
 fn main() {

@@ -16,6 +16,7 @@ pub struct Tag(u64);
 
 
 // should closures "know" about their parameters?
+#[derive(Clone)]
 pub struct ValueClosure<'s>(pub Arc<Scope<'static>>, pub Box<Rope<'s>>);
 
 impl<'s> ValueClosure<'s> {
@@ -31,13 +32,32 @@ pub struct ArcSlice<'s> {
 }
 
 impl<'s> ArcSlice<'s> {
-    pub fn to_str(&'s self) -> &'s str {
-        return &self.string[self.range];
-    }
-    fn make_static(self) -> ArcSlice<'static> {
+    pub fn from_string(s: String) -> ArcSlice<'static> {
         return ArcSlice {
-            string: Cow::Owned(self.string.into_owned()),
-            range: self.range
+            range: (0..(s.len())),
+            string: Cow::Owned(Arc::new(s))
+        }
+    }
+
+    pub fn to_str(&'s self) -> &'s str {
+        return &self.string[self.range.clone()];
+    }
+    pub fn to_string(&self) -> String {
+        self.to_str().to_owned()
+    }
+    pub fn into_string(mut self) -> String {
+        println!("INTOIZE {:?}", self.to_str());
+        let range = self.range.clone();
+        let res = Arc::try_unwrap(self.string.into_owned() )
+            .map(|mut x| { x.split_off(range.start); x.split_off(range.end - range.start)   })
+            .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
+        println!("INTOIZED {:?}", res);
+        res
+    }
+    fn make_static(&mut self) -> ArcSlice<'static> {
+        return ArcSlice {
+            string: Cow::Owned(self.string.to_mut().clone()),
+            range: self.range.clone()
         }
     }
     fn split_first(&mut self) -> Option<char> {
@@ -49,31 +69,38 @@ impl<'s> ArcSlice<'s> {
             None
         }
     }
-    fn chars(&'s self) -> Chars<'s> {
+    pub fn chars(&'s self) -> Chars<'s> {
         self.to_str().chars()
     }
     fn len(&self) -> usize {
         self.range.len()
     }
-    fn concat(self, other: ArcSlice<'s>) -> ArcSlice<'s> {
+    fn concat(mut self, other: ArcSlice<'s>) -> ArcSlice<'s> {
         if self.len() == 0 {
-            self
-        } else if other.len() == 0 {
             other
-        } else if Arc::strong_count(self.string.as_ref()) == 1 { // should be thread-safe in this case
-            self.string.push_str(other.to_str());
+        } else if other.len() == 0 {
             self
         } else {
-            let mut s = self.to_str().to_owned();
+            println!("GIVING {:?} {:?}", (&self).to_str(), other.to_str());
+            let mut s = self.into_string();
             s.push_str(other.to_str());
-            self.string = Cow::Owned(Arc::new(s));
-            self
+            println!("  WITH  {:?}", s);
+            ArcSlice::from_string(s)
         }
     }
-    fn split_at(&'s self, idx: usize) -> (ArcSlice<'s>, ArcSlice<'s>) {
-        let left = ArcSlice { string: self.string, range: Range { start: self.range.start, end: self.range.start+idx } };
-        let right = ArcSlice { string: self.string, range: Range { start: self.range.start + idx, end: self.range.end } };
-        (left, right)
+    fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
+        let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
+        (*self).range.start += idx;
+        left
+    }
+}
+
+impl<'s> Clone for ArcSlice<'s> {
+    fn clone(&self) -> ArcSlice<'s> {
+        return ArcSlice {
+            string: Cow::Owned(self.string.clone().into_owned()),
+            range: self.range.clone()
+        }
     }
 }
 
@@ -81,11 +108,10 @@ impl<'s> ArcSlice<'s> {
 
 // A Value is something that can be used as a parameter to a macro,
 // or as a return value.
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub enum Value<'s> {
     Str(ArcSlice<'s>),
-    List(Vec<&'s Value<'s>>),
-    OwnedList(Vec<Value<'s>>),
+    List(Vec<Value<'s>>),
     Tagged(Tag,Box<Value<'s>>),
     Closure(ValueClosure<'s>),
     Bubble(ValueClosure<'s>) // <- gets auto-expanded when it reaches its original scope
@@ -97,7 +123,6 @@ impl<'s> PartialEq for Value<'s> {
         match (self, other) {
             (&Str(ref a), &Str(ref b)) => { a.to_str() == b.to_str() },
             (&List(ref a), &List(ref b)) => { a == b }
-            (&OwnedList(ref a), &OwnedList(ref b)) => { a == b },
             (&Tagged(ref a1, ref b1), &Tagged(ref a2, ref b2)) => { a1 == a2 && b1 == b2 },
             _ => { false }
         }
@@ -124,23 +149,23 @@ pub struct Rope<'s> {
 }
 
 impl<'s> ValueClosure<'s> {
-    pub fn force_clone(self) -> ValueClosure<'static> {
+    pub fn force_clone(&mut self) -> ValueClosure<'static> {
+        println!("STATICIZE");
         match self {
-           ValueClosure(sc, ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
+           &mut ValueClosure(ref sc, ref mut ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
         }
     }
 }
 
 impl<'s,'t> Value<'s> {
-    pub fn make_static(self) -> Value<'static> {
+    pub fn make_static(&mut self) -> Value<'static> {
         match self {
             // FIXME: Cow::Owned will cause excessive copying later
-            Str(s) => { Str(s.make_static()) },
-            List(l) => { panic!() } // FIXME OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
-            OwnedList(l) => { OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
-            Tagged(t, v) => { Tagged(t, Box::new(v.make_static())) },
-            Closure(c) => { Closure(c.force_clone()) },
-            Bubble(c) => { Bubble(c.force_clone()) },
+            &mut Str(ref mut s) => { Str(s.make_static()) },
+            &mut List(ref mut l) => { List(l.into_iter().map(|x| { x.make_static() }).collect()) },
+            &mut Tagged(ref t, ref mut v) => { Tagged(*t, Box::new(v.make_static())) },
+            &mut Closure(ref mut c) => { Closure(c.force_clone()) },
+            &mut Bubble(ref mut c) => { Bubble(c.force_clone()) },
         }
     }
 /*
@@ -160,12 +185,12 @@ impl<'s,'t> Value<'s> {
 }
 
 impl<'s> Leaf<'s> {
-fn make_static(self) -> Leaf<'static> { match self {
+fn make_static(&mut self) -> Leaf<'static> { match self {
     // TODO avoid this at all costs
-    Leaf::Chr(c) => {
+    &mut Leaf::Chr(ref mut c) => {
         Leaf::Chr(c.make_static())
     },
-    Leaf::Own(v) => { Leaf::Own( v.make_static() )  }
+    &mut Leaf::Own(ref mut v) => { Leaf::Own( v.make_static() )  }
 } }
 /*
     fn dupe(&'s self) -> Leaf<'s> { match self {
@@ -182,9 +207,9 @@ fn make_static(self) -> Leaf<'static> { match self {
 }
 
 impl<'s> Rope<'s> {
-    pub fn make_static(self) -> Rope<'static> {
+    pub fn make_static(&mut self) -> Rope<'static> {
         let mut new_rope = Rope::new();
-        for item in self.data.into_iter() {
+        for item in self.data.iter_mut() {
             new_rope.data.push_back( item.make_static() );
         }
         new_rope
@@ -347,9 +372,9 @@ impl<'s> Rope<'s> {
         let mut has = true;
         let mut string : ArcSlice = ArcSlice {
             string: Cow::Owned(Arc::new("".to_owned())),
-            range: 0..1
+            range: 0..0
         };
-        for v in self.data.iter() {
+        for v in self.data.into_iter() {
             match v.to_str() {
                 // TODO avoid copies
                 Some(x) => { string = string.concat(x); },
@@ -397,43 +422,42 @@ impl<'s> Rope<'s> {
        }
     }
         // may want to make this stuff iterative
-    pub fn split_at<F : FnMut(char) -> bool>(mut self, match_val : bool, match_eof: bool, matcher: &mut F)
-        -> (Rope<'s>, Option<Rope<'s>>)  {
+    pub fn split_at<'r,F : FnMut(char) -> bool>(&'r mut self, match_val : bool, match_eof: bool, matcher: &mut F)
+        ->  Option<Rope<'s>>  {
         // TODO can optimize the below. would vecs be faster than linked lists?
         let mut prefix = Rope { data: LinkedList::new() };
         while !self.data.is_empty() {
             let mut done = false;
-            let mut process = None;
-            match self.data.front_mut().unwrap() {
-                &mut Leaf::Own(ref mut v) => {
+            let mut front = self.data.pop_front().unwrap();
+            match front {
+                Leaf::Own(_) => {
                     if match_val {
+                        prefix.data.push_back(front);
                     } else {
-                        done = true;
+                        self.data.push_front(front);
+                        return (Some(prefix));
                     }
                 },
-                &mut Leaf::Chr(ref mut slice) => {
+                Leaf::Chr(mut slice) => {
                     if let Some(idx) = slice.to_str().find(|x| { matcher(x) }) {
+                        println!("Retrieve {:?} {:?}", slice.to_str(), idx);
                         if idx > 0 {
-                            let pair = slice.split_at(idx);
-                            prefix.data.push_back(Leaf::Chr(pair.0));
-                            *slice = pair.1;
+                            let start = slice.split_at(idx);
+                            prefix.data.push_back(Leaf::Chr(start));
                         }
-                        done = true;
-                    } 
+                        self.data.push_front(Leaf::Chr(slice));
+                        return (Some(prefix));
+                    } else {
+                        prefix.data.push_back(Leaf::Chr(slice));
+                    }
                 }
-
-            }
-
-            if done {
-                return (self, Some(prefix));
-            } else {
-                prefix.data.push_back(self.data.pop_front().unwrap());
-            }
+            };
         }
         if match_eof {
-            return (self  ,Some(prefix))
+            return (Some(prefix))
         } else {
-            return (prefix, None)
+            *self = prefix;
+            return ( None)
         }
     }
 

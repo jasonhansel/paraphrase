@@ -6,11 +6,22 @@ use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
 use std::borrow::Cow;
+use futures::prelude::*;
+use futures::future;
+use futures::future::Future;
+use futures::future::*;
+use futures::task::*;
+use futures::executor::*;
+use futures::sync::*;
+use futures::*;
+use futures_cpupool::*;
+
+
 
 pub use std::sync::Arc;
 
 pub enum Command<'c> {
-    Native(Box<for<'s> fn(Vec<Value<'s>>) -> Value<'s>>),
+    Native(Box<for<'s> fn(Vec<Value<'s>>) -> NativeResult<'s>>),
     InOther(Arc<Scope<'c>>),
     User(Vec<String>, Rope<'c>)
 }
@@ -50,7 +61,6 @@ impl<'c> Debug for Scope<'c> {
         write!(f, "]")
     }
 }
-
 
 impl<'c> Scope<'c> {
     pub fn new(sigil: char) -> Scope<'c> {
