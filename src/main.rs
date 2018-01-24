@@ -19,6 +19,11 @@ mod scope;
 mod base;
 mod expand;
 
+extern crate futures;
+extern crate futures_cpupool;
+
+use futures_cpupool::{CpuFuture, CpuPool};
+use futures::prelude::*;
 use scope::*;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -43,7 +48,8 @@ fn it_works() {
     let mut s = String::new();
     let mut chars = read_file(&mut s, "tests/1-simple.pp").unwrap();
     let scope = Arc::new(default_scope());
-    let results = new_expand(scope, chars);
+    let pool = CpuPool::new_num_cpus();
+    let results = expand_with_pool(pool, scope, chars).wait().unwrap();
     println!("||\n{}||", results.to_str().unwrap());
 }
 
