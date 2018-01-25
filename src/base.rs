@@ -22,10 +22,8 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
 }
 
 fn list<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
-/*    if args.len() != 1 { panic!() }
-    let result = args.into_iter().next().unwrap().coerce();
-    println!("LIST {:?}", result); */
-    Done(Value::Str(ArcSlice::from_string("".to_owned())))
+   if args.len() != 1 { panic!() }
+    Done(args.into_iter().next().unwrap().coerce_list())
 }
 
 fn assert<'s>(mut args: Vec<Rope<'static>>) -> EvalResult<'static> {
@@ -37,7 +35,7 @@ fn assert<'s>(mut args: Vec<Rope<'static>>) -> EvalResult<'static> {
             // TODO fix threading issue...
             let mark = if val_a == val_b { "✓ " } else { "✗ " };
             if val_a != val_b {
-                message = message + ArcSlice::from_string(format!(" - found {:?}", val_b));
+                message = message + ArcSlice::from_string(format!(" - expected {:?}, found {:?}", val_a, val_b));
             }
             Done(Value::Str(
                 ArcSlice::from_string(mark.to_owned()) + message
@@ -190,6 +188,6 @@ pub fn default_scope<'c>() -> Scope<'c> {
     scope.add_native(vec![ Ident("expand".to_owned()), Param ], expand);
     scope.add_native(vec![ Ident("rescope".to_owned()), Param, Param ], rescope); 
     scope.add_native(vec![ Ident("assert".to_owned()), Param, Param, Param ], assert); 
-    scope.add_native(vec![ Ident("list".to_owned()), Param ], assert); 
+    scope.add_native(vec![ Ident("list".to_owned()), Param ], list); 
     scope
 }

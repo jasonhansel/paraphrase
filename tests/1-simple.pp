@@ -34,8 +34,13 @@
 
 #assert(if_eq_then)(as a test: hello world)(#w #z)
 
+#define(X){X};
+#define(Y){Y};
 
-#assert(list)(XY)(#list(
+#assert(list)(#list(
+	#X
+	#Y
+))(#list(
 	#literal{X}
 	#literal{Y}
 ))
