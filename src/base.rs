@@ -74,7 +74,7 @@ fn end_paren<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
 fn literal<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
-           Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().to_string()  ))) 
+           Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().into_string()  ))) 
         },
         _ => { panic!() }
     }

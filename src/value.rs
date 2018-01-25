@@ -44,12 +44,10 @@ impl<'s> ArcSlice<'s> {
     pub fn to_str(&'s self) -> &'s str {
         return &self.string[self.range.clone()];
     }
-    pub fn to_string(&self) -> String {
-        self.to_str().to_owned()
-    }
-    pub fn into_string(self) -> String {
+    
+   pub fn into_string(self) -> String {
         let range = self.range.clone();
-        let res = Arc::try_unwrap(self.string.into_owned() )
+        let res = Arc::try_unwrap(self.string.into_owned())
             .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
             .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
         res
@@ -73,19 +71,19 @@ impl<'s> ArcSlice<'s> {
     fn len(&self) -> usize {
         self.range.len()
     }
+
     fn concat(mut self, other: ArcSlice<'s>) -> ArcSlice<'s> {
         if self.len() == 0 {
             other
         } else if other.len() == 0 {
             self
         } else {
-            println!("GIVING {:?} {:?}", (&self).to_str(), other.to_str());
             let mut s = self.into_string();
             s.push_str(other.to_str());
-            println!("  WITH  {:?}", s);
             ArcSlice::from_string(s)
         }
     }
+
     fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
         let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
         (*self).range.start += idx;
@@ -147,7 +145,6 @@ pub struct Rope<'s> {
 
 impl<'s> ValueClosure<'s> {
     pub fn force_clone(&mut self) -> ValueClosure<'static> {
-        println!("STATICIZE");
         match self {
            &mut ValueClosure(ref sc, ref mut ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
         }
@@ -157,26 +154,13 @@ impl<'s> ValueClosure<'s> {
 impl<'s,'t> Value<'s> {
     pub fn make_static(&mut self) -> Value<'static> {
         match self {
-            // FIXME: Cow::Owned will cause excessive copying later
+            // FIXME: avoid using this (or clone)
             &mut Str(ref mut s) => { Str(s.make_static()) },
             &mut List(ref mut l) => { List(l.into_iter().map(|x| { x.make_static() }).collect()) },
             &mut Tagged(ref t, ref mut v) => { Tagged(*t, Box::new(v.make_static())) },
             &mut Closure(ref mut c) => { Closure(c.force_clone()) },
         }
     }
-/*
-// TODO allow multipart macros again?
-    fn dupe(&self) -> Value<'s> {
-        match self {
-            // FIXME: Cow::Owned will cause excessive copying later
-            &Str(ref s) => { Str(Cow::Owned(s.clone().into_owned())) },
-            &List(ref l) => { panic!() } // FIXME OwnedList(l.into_iter().map(|x| { x.make_static() }).collect()) },
-            &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.dupe() }).collect()) },
-            &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.dupe())) },
-            &Closure(ref c) => { Closure(c.force_dupe()) },
-        }
-    }
-*/
 }
 
 impl<'s> Leaf<'s> {
@@ -187,18 +171,7 @@ fn make_static(&mut self) -> Leaf<'static> { match self {
     },
     &mut Leaf::Own(ref mut v) => { Leaf::Own( v.make_static() )  }
 } }
-/*
-    fn dupe(&'s self) -> Leaf<'s> { match self {
-        // TODO avoid this at all costs
-        &Leaf::Chr(Cow::Borrowed(ref c)) => {
-            Leaf::Chr(Cow::Borrowed( &**c ))
-        },
-        &Leaf::Chr(Cow::Owned(ref c)) => {
-            Leaf::Chr(Cow::Owned(c.clone()))
-        },
-        &Leaf::Own(ref v) => { Leaf::Own( v.dupe() )  }
-    } }
-*/
+
 }
 
 impl<'s> Rope<'s> {
@@ -209,20 +182,7 @@ impl<'s> Rope<'s> {
         }
         new_rope
     }
-    /*
-    pub fn dupe(&'s self) -> Rope<'s> {
-        let mut new_rope = Rope::new();
-        for item in self.data.iter() {
-            new_rope.data.push_back( item.dupe() );
-        }
-        new_rope
-    }
-    */
 }
-
-
-
-use std::ptr;
 
 impl<'s> Value<'s> {
    pub fn as_str(self) -> Option<ArcSlice<'s>> {
@@ -231,30 +191,16 @@ impl<'s> Value<'s> {
             _ => None
         }
     }
-
 }
-impl<'s> Leaf<'s> {
 
+impl<'s> Leaf<'s> {
     pub fn to_str(self) -> Option<ArcSlice<'s>> {
-        // TODO: may need to handle Bubbles here
         match self {
             Leaf::Chr(c) => { Some(c) },
             Leaf::Own(Value::Str(v)) => { Some(v) },
             _ => { None }
         }
     }
-    pub fn as_val(self) -> Option<Value<'s>> {
-        match self {
-            Leaf::Chr(_) => { None  },
-            Leaf::Own(v) => { Some(v) }
-        }
-    }
-
-
-
-
-
-
 }
 
 
