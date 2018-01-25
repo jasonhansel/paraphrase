@@ -8,18 +8,18 @@ use std::mem::replace;
 use std::borrow::Cow;
 
 pub use std::sync::Arc;
-type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
+type NativeFn = for<'s> fn(Vec<Rope>) -> EvalResult;
 
 #[derive(Clone)]
-enum Command<'c> {
+enum Command {
     Native(NativeFn),
-    InOther(Arc<Scope<'c>>),
-    User(Vec<String>, Rope<'c>)
+    InOther(Arc<Scope>),
+    User(Vec<String>, Rope)
 }
 
 use self::Command::*;
 
-impl<'c> Debug for Command<'c> {
+impl Debug for Command {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             &Native(_) => { write!(f, "[native code]") },
@@ -37,13 +37,13 @@ pub enum CommandPart {
 pub use CommandPart::*;
 
 #[derive(Clone)]
-pub struct Scope<'c> {
+pub struct Scope {
     pub sigil: char,
-    commands: HashMap<Vec<CommandPart>, Command<'c>>,
+    commands: HashMap<Vec<CommandPart>, Command>,
     pub part_done: Option<UnfinishedParse>
 }
 
-impl<'c> Debug for Scope<'c> {
+impl Debug for Scope {
     fn fmt(&self, f: &mut Formatter) -> Result {
         let mut first = true;
         write!(f, "[scope @")?;
@@ -55,8 +55,8 @@ impl<'c> Debug for Scope<'c> {
     }
 }
 
-impl<'c> Scope<'c> {
-    pub fn new(sigil: char) -> Scope<'c> {
+impl Scope {
+    pub fn new(sigil: char) -> Scope {
         Scope {
             sigil: sigil,
             commands: HashMap::new(),
@@ -72,9 +72,9 @@ impl<'c> Scope<'c> {
         self.commands.insert(parts, Command::Native(p));
     }
 
-    pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
+    pub fn add_user(mut this: &mut Scope, parts: Vec<CommandPart>,
                         params: Vec<String>,
-                        rope: Rope<'c>) {
+                        rope: Rope) {
         this.commands
             .insert(parts, Command::User(params, rope));
     }
@@ -85,7 +85,7 @@ impl<'c> Scope<'c> {
 }
 
 
-pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
+pub fn dup_scope<'s>(scope : &Arc<Scope>) -> Scope {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
     if scope.part_done.is_some() {
@@ -103,13 +103,13 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
 }
 
 #[derive(Clone,Debug)]
-pub enum EvalResult<'v> {
-    Expand(Arc<Scope<'static>>, Rope<'v>),
-    Done(Value<'v>)
+pub enum EvalResult {
+    Expand(Arc<Scope>, Rope),
+    Done(Value)
 }
 use EvalResult::*;
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Rope<'v>>) -> EvalResult<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope>, command: Vec<CommandPart>, args: Vec<Rope>) -> EvalResult {
     println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {

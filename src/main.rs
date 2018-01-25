@@ -36,7 +36,7 @@ use value::*;
 use base::*;
 use expand::*;
 
-fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
+fn read_file(mut string: String, path: &str) -> Result<Rope, Error> {
     std::io::stdout().flush().unwrap();
     let mut file = File::open(path)?;
     file.read_to_string(&mut string)?;

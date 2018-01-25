@@ -21,22 +21,22 @@ enum ParseEntry {
 
 pub trait TokenVisitor<'s, 't : 's> {
     fn start_command(&mut self);
-    fn end_command(&mut self, Vec<CommandPart>, Arc<Scope<'static>>);
+    fn end_command(&mut self, Vec<CommandPart>, Arc<Scope>);
     fn start_paren(&mut self);
     fn end_paren(&mut self);
-    fn raw_param(&mut self, Rope<'s>);
-    fn semi_param(&mut self, Arc<Scope<'static>>, Rope<'s>, Vec<CommandPart>) -> Rope<'s> ;
-    fn text(&mut self, Rope<'s>);
+    fn raw_param(&mut self, Rope);
+    fn semi_param(&mut self, Arc<Scope>, Rope, Vec<CommandPart>) -> Rope ;
+    fn text(&mut self, Rope);
     fn done(&mut self);
 }
 
 #[derive(Clone,Debug)]
 enum Instr {
-    Push(Rope<'static>),
+    Push(Rope),
     Concat(u16),
     Call(u16, Vec<CommandPart>),
-    Close(Rope<'static>),
-    ClosePartial(Rope<'static>, UnfinishedParse),
+    Close(Rope),
+    ClosePartial(Rope, UnfinishedParse),
     StartCmd
 }
 
@@ -50,26 +50,27 @@ pub struct UnfinishedParse {
 
 pub type Fut<T> = Box<Future<Item=T,Error=()> + Send>;
 
+#[derive(Debug)]
 enum Chunk<T> {
-    Text(Rope<'static>),
+    Text(Rope),
     Join(JoinHandle<T>)
 }
 
-struct Expander<'s> {
+struct Expander {
     calls: Vec<u16>,
     parens: Vec<u16>,
     instr: Vec<Instr>,
-    joins: Vec<Chunk<Rope<'s>>>,
-    final_join: Option<JoinHandle<EvalResult<'s>>>,
+    joins: Vec<Chunk<Rope>>,
+    final_join: Option<JoinHandle<EvalResult>>,
 
     pool: CpuPool,
-    scope: Arc<Scope<'static>>
+    scope: Arc<Scope>
 }
 
 
 // TODO: is this really concurrent?
-impl Expander<'static> {
-    fn new(pool: CpuPool, scope:Arc<Scope<'static>>) -> Expander<'static> {
+impl Expander {
+    fn new(pool: CpuPool, scope:Arc<Scope>) -> Expander {
         Expander {
             parens: vec![0],
             calls: vec![],
@@ -95,8 +96,9 @@ impl Expander<'static> {
         }
         self.instr.split_off(idx)
     }
-    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> JoinHandle<EvalResult<'static>> {
+    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> JoinHandle<EvalResult> {
         let scope = self.scope.clone();
+        let instr = instr.clone();
         thread::spawn(move ||{
             let mut stack : Vec<Chunk<Rope>> = vec![]; 
             for i in instr { match i {
@@ -147,7 +149,7 @@ impl Expander<'static> {
                                Chunk::Text(r) => r,
                                Chunk::Join(j) => j.join().unwrap()
                            }
-                       }).collect::<Vec<Rope<'static>>>();
+                       }).collect::<Vec<Rope>>();
 
                         match eval(scope, inner_cmd, coerced) {
                             // TODO decrease pointless recursion
@@ -207,12 +209,12 @@ impl Expander<'static> {
             self.instr.push(Instr::Concat(num));
         }
     }
-    fn raw_param<'s>(&mut self, mut rope: Rope<'s>) {
+    fn raw_param(&mut self, mut rope: Rope) {
         *( self.calls.last_mut().unwrap() ) += 1;
         // TODO avoid clones here
         self.instr.push(Instr::Close(rope.make_static()));
     }
-    fn semi_param<'s>(&mut self, stack: Vec<ParseEntry>, mut rope: Rope<'s>, cmd: Vec<CommandPart>) {
+    fn semi_param(&mut self, stack: Vec<ParseEntry>, mut rope: Rope, cmd: Vec<CommandPart>) {
         let mut call = self.get_call();
         self.calls.pop();
         let unfinished = UnfinishedParse {
@@ -224,7 +226,7 @@ impl Expander<'static> {
         call.push(Instr::ClosePartial( rope.make_static(), unfinished));
         self.final_join = Some(self.handle_call(cmd, call));
     }
-    fn text<'s>(&mut self, mut rope: Rope<'s>) {
+    fn text(&mut self, mut rope: Rope) {
         if self.calls.len() == 0 {
             self.joins.push(Chunk::Text(rope.make_static()));
         } else {
@@ -243,9 +245,9 @@ impl Expander<'static> {
 // TODO: allow includes - will be tricky to avoid copying owned characters around
 fn parse<'f, 'r, 's : 'r>(
     mut stack: Vec<ParseEntry>,
-    scope: Arc<Scope<'static>>,
-    mut rope: Rope<'s>,
-    visitor: &mut Expander<'static>
+    scope: Arc<Scope>,
+    mut rope: Rope,
+    visitor: &mut Expander
 ){
     while let Some(current) = stack.pop() { match current {
         ParseEntry::Command(mut parts) => {
@@ -365,15 +367,15 @@ fn parse<'f, 'r, 's : 'r>(
 
 pub fn expand_with_pool<'f>(
     pool: CpuPool,
-    mut _scope: Arc<Scope<'static>>,
-    mut _rope: Rope<'static>
-) -> JoinHandle<Value<'static>> {
+    mut _scope: Arc<Scope>,
+    mut _rope: Rope
+) -> JoinHandle<Value> {
     // TODO: why do we need a new CPUPOOL here:
-    let id = rand::random::<u64>();
     let ipool = pool.clone();
+    let rope = _rope.clone();
     thread::spawn(move || {
         let mut scope = _scope.clone();
-        let mut rope = _rope;
+        let mut rope = rope;
         let mut joins : Vec<Chunk<Rope>> = vec![];
         let mut last : Option<Value> = None;
         loop {
