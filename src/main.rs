@@ -49,10 +49,11 @@ fn it_works() {
     let mut chars = read_file(String::new(), "tests/1-simple.pp").unwrap();
     let pool = CpuPool::new_num_cpus();
     let pool2 = pool.clone();
-    let results = pool.spawn_fn(move ||{ 
+    let results = 
         expand_with_pool(pool2, Arc::new(default_scope()), chars)
-            .map(|x| { x.as_str().unwrap().into_string() })
-    }).wait().unwrap();
+            .join().unwrap()
+            .as_str().unwrap()
+            .into_string();
     assert!(true);
     assert!(true);
     println!("||\n{}||", results);
