@@ -21,6 +21,7 @@ use futures_cpupool::*;
 pub use std::sync::Arc;
 type NativeFn = for<'s> fn(Vec<Value<'static>>) -> EvalResult<'static>;
 
+#[derive(Clone)]
 pub enum Command<'c> {
     Native(NativeFn),
     InOther(Arc<Scope<'c>>),
@@ -46,6 +47,7 @@ pub enum CommandPart {
 }
 pub use CommandPart::*;
 
+#[derive(Clone)]
 pub struct Scope<'c> {
     pub sigil: char,
     commands: HashMap<Vec<CommandPart>, Command<'c>>,

@@ -9,6 +9,7 @@ use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
+use std::io;
 use std::str::Chars;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -52,10 +53,10 @@ impl<'s> ArcSlice<'s> {
         self.to_str().to_owned()
     }
     pub fn into_string(mut self) -> String {
-        println!("INTOIZE {:?}", self.to_str());
+        println!("INTOIZE {:?} {:?}", self.string, self.range);
         let range = self.range.clone();
         let res = Arc::try_unwrap(self.string.into_owned() )
-            .map(|mut x| { x.split_off(range.start); x.split_off(range.end - range.start)   })
+            .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
             .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
         println!("INTOIZED {:?}", res);
         res

@@ -13,7 +13,9 @@ use futures::stream::FuturesOrdered;
 use rand;
 
 
-#[derive(Debug)]
+// TODO: clone() less
+
+#[derive(Clone,Debug)]
 enum ParseEntry {
     Text(u8, bool), // bool is true if in a call
     Command(Vec<CommandPart>)
@@ -30,7 +32,7 @@ pub trait TokenVisitor<'s, 't : 's> {
     fn done(&mut self);
 }
 
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 enum Instr {
     Push(Rope<'static>),
     Concat(u16),
@@ -41,7 +43,7 @@ enum Instr {
 }
 use self::Instr::*;
 
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub struct UnfinishedParse {
     stack: Vec<ParseEntry>,
     calls: Vec<u16>,
@@ -92,19 +94,15 @@ impl<'s> Expander<'s> {
         self.instr.split_off(idx)
     }
     fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> Fut<EvalResult<'static>> {
-        let scope = self.scope.clone();
-        let scope2 = self.scope.clone();
         let pool = self.pool.clone();
         let pool2 = self.pool.clone();
         println!("[processing phase 1]");
-        Box::new(stream::iter_ok(instr.into_iter()).fold(vec![], move |mut stack: Vec<Fut<Rope<'static>>>, i| {
+        Box::new(stream::iter_ok(instr.into_iter()).fold((vec![], self.scope.clone()), move |(mut stack, scope): (Vec<Fut<Rope<'static>>>, Arc<Scope<'static>>), i| {
             match i {
             Instr::StartCmd => {
-                ok(stack)
             }
             Instr::Push(r) => {
                 stack.push(Box::new(ok(r)));
-                ok(stack)
             },
             Instr::Concat(cnt) => {
                 let mut new_rope = Rope::new();
@@ -118,32 +116,29 @@ impl<'s> Expander<'s> {
                     });
                 println!(">end concat<");
                 stack.push(Box::new(to_push));
-                ok(stack)
             },
             Instr::ClosePartial(r, unf) => {
                 let mut new_scope = dup_scope(&scope);
                 new_scope.part_done(unf);
                 let v = Rope::from_value(  Value::Closure ( ValueClosure( Arc::new(new_scope), Box::new(r)  )) ) ;
                 stack.push(Box::new(ok(v)));
-                ok(stack)
             },
             Instr::Close(r) => {
                 let stat = r;
                 let v = Rope::from_value(  Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ) ;
                 stack.push(Box::new(ok(v)));
-                ok(stack)
             }
             Instr::Call(cnt, inner_cmd) => {
                 let idx = stack.len() - cnt as usize;
-                let scope = scope.clone();
                 println!(">start call<");
                 let pool = pool.clone();
+                let scope = scope.clone();
                 let ic = inner_cmd.clone();
                 let to_push = stream::futures_ordered(stack.split_off(idx).into_iter())
                     .map(|x| { println!("COERCING {:?}", x); x.coerce() })
                     .collect()
                     .and_then(move |args| {
-                        match eval(scope.clone(), inner_cmd, args) {
+                        match eval(scope, inner_cmd, args) {
                             EvalResult::Expand(s, r) => expand_with_pool(pool, s, r),
                             EvalResult::Done(v) => Box::new(ok(v))
                         }
@@ -151,9 +146,8 @@ impl<'s> Expander<'s> {
                     .map(|v| { println!("GOT {:?} FOR {:?}", v, "LOC");  Rope::from_value(v) });
                 println!(">end call<");
                 stack.push(Box::new(to_push));
-                ok(stack)
             }
-        } }).and_then(move |vec| {
+        } ok((stack, scope)) }).and_then(move |(vec, scope2)| {
             println!("[processing phase 2]");
             let r = stream::futures_ordered(vec)
                 .map(|x| { x.coerce() })
@@ -379,10 +373,10 @@ pub fn expand_with_pool<'f>(
         pool.clone()
         .spawn(loop_fn((vec![], _scope, _rope), move |(mut joins, mut scope, mut rope)| {
             println!("[expand phase 1] {:?}", id);
-            let UnfinishedParse {parens, calls, stack, instr} = Arc::get_mut(&mut scope).unwrap().part_done.take().unwrap_or_else(|| {
+            let UnfinishedParse {parens, calls, stack, instr} = Arc::make_mut(&mut scope).part_done.take().unwrap_or_else(|| {
                 UnfinishedParse {
                     parens: vec![],
-                    calls: vec![0],
+                    calls: vec![],
                     stack: vec![ParseEntry::Text(0, false)],
                     instr: vec![]
                 }
@@ -393,6 +387,7 @@ pub fn expand_with_pool<'f>(
             parse(stack, scope.clone(), rope, &mut expander);
             println!("[expand phase 3] {:?}", id);
             joins.extend( expander.joins );
+            println!("JOINS {:?}", joins.len());
             if let Some(final_join) = expander.final_join {
                 // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
                 // situations. Do I need it everywhere?
@@ -411,7 +406,7 @@ pub fn expand_with_pool<'f>(
         })
         .and_then(|joins| { join_all(joins) })
         .map(move |vec| {
-                println!("[expansion completed] {:?}", id);
+                println!("[expansion completed] {:?}", vec);
                 let mut res = Rope::new();
                 for v in vec.into_iter() { res = res.concat(v); }
                 let resc = res.coerce();

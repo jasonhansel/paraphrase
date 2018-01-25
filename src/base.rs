@@ -29,7 +29,7 @@ fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
                 ch == needle
             });
             rest.split_char(); // take the matched character out
-            Expand(inner_scope.clone(),
+            Expand(inner_scope,
                  prefix.unwrap().concat(
                         Rope::from_slice(replacement)
                 ).concat(rest) 
@@ -118,7 +118,7 @@ fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
 fn expand<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
-            Expand(scope.clone(), *contents)
+            Expand(scope, *contents)
         },
         _ => {panic!("ARG"); }
     }
