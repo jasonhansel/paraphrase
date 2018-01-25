@@ -10,6 +10,8 @@ use futures::prelude::*;
 use futures_cpupool::*;
 use futures::stream;
 use futures::stream::FuturesOrdered;
+use rand;
+
 
 #[derive(Debug)]
 enum ParseEntry {
@@ -55,6 +57,7 @@ struct Expander<'s> {
     parens: Vec<u16>,
     instr: Vec<Instr>,
     joins: Vec<Fut<Rope<'s>>>,
+    final_join: Option<Fut<EvalResult<'s>>>,
 
     pool: CpuPool,
     scope: Arc<Scope<'static>>
@@ -70,7 +73,8 @@ impl<'s> Expander<'s> {
 
             pool: pool,
             scope: scope,
-            joins: vec![]
+            joins: vec![],
+            final_join: None
         }
     }
     fn get_call(&mut self) -> Vec<Instr> {
@@ -87,11 +91,14 @@ impl<'s> Expander<'s> {
         }
         self.instr.split_off(idx)
     }
-    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) {
+    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> Fut<EvalResult<'static>> {
         let scope = self.scope.clone();
         let scope2 = self.scope.clone();
-        // let pool = self.pool.clone(); <- TODO use this
-        let result = stream::iter_ok(instr.into_iter()).fold(vec![], move |mut stack: Vec<Fut<Rope<'static>>>, i| { match i {
+        let pool = self.pool.clone();
+        let pool2 = self.pool.clone();
+        println!("[processing phase 1]");
+        Box::new(stream::iter_ok(instr.into_iter()).fold(vec![], move |mut stack: Vec<Fut<Rope<'static>>>, i| {
+            match i {
             Instr::StartCmd => {
                 ok(stack)
             }
@@ -102,12 +109,14 @@ impl<'s> Expander<'s> {
             Instr::Concat(cnt) => {
                 let mut new_rope = Rope::new();
                 let idx = stack.len() - cnt as usize;
+                println!(">start concat<");
                 let to_push = join_all(stack.split_off(idx))
                     .map(|vec| {
                         let mut rope = Rope::new();
                         for r in vec { rope = rope.concat(r); }
                         rope
                     });
+                println!(">end concat<");
                 stack.push(Box::new(to_push));
                 ok(stack)
             },
@@ -127,26 +136,39 @@ impl<'s> Expander<'s> {
             Instr::Call(cnt, inner_cmd) => {
                 let idx = stack.len() - cnt as usize;
                 let scope = scope.clone();
+                println!(">start call<");
+                let pool = pool.clone();
+                let ic = inner_cmd.clone();
                 let to_push = stream::futures_ordered(stack.split_off(idx).into_iter())
                     .map(|x| { println!("COERCING {:?}", x); x.coerce() })
                     .collect()
                     .and_then(move |args| {
-                        eval(scope.clone(), inner_cmd, args)
+                        match eval(scope.clone(), inner_cmd, args) {
+                            EvalResult::Expand(s, r) => expand_with_pool(pool, s, r),
+                            EvalResult::Done(v) => Box::new(ok(v))
+                        }
                     })
-                    .map(|v| { Rope::from_value(v) });
+                    .map(|v| { println!("GOT {:?} FOR {:?}", v, "LOC");  Rope::from_value(v) });
+                println!(">end call<");
                 stack.push(Box::new(to_push));
                 ok(stack)
             }
         } }).and_then(move |vec| {
-            stream::futures_ordered(vec)
-                .map(|x| { println!("COERCING {:?}", x); x.coerce() })
+            println!("[processing phase 2]");
+            let r = stream::futures_ordered(vec)
+                .map(|x| { x.coerce() })
                 .collect()
-                .and_then(move |args| {
-                    eval(scope2, cmd, args)
+                .map(move |args| { eval(scope2, cmd, args) });
+ /*               .and_then(move |args| { 
+                    match eval(scope2, cmd, args) {
+                        EvalResult::Expand(s, mut r) => expand_with_pool(pool2, s, r.make_static()),
+                        EvalResult::Done(v) => Box::new(ok(v))
+                    }
                 })
-                .map(Rope::from_value)
-        });
-        self.joins.push(Box::new(result));
+                .map(Rope::from_value); */
+            println!("[processing phase 3]");
+            return r
+        }))
     }
 
     fn start_command(&mut self) {
@@ -154,20 +176,32 @@ impl<'s> Expander<'s> {
         self.calls.push(0);
     }
     fn end_command(&mut self, cmd: Vec<CommandPart>, scope: Arc<Scope<'static>>) {
-        if let Some(call_len) = self.calls.pop() {
-            println!("HERE {:?}", self.instr);
+        let call_len = self.calls.pop().unwrap();
+        if self.calls.len() > 0 {
+            println!("INSIDE: {:?} {:?} {:?}", cmd, self.calls, self.instr);
             self.instr.push(Instr::Call(call_len, cmd));
             if let Some(l) = self.parens.last_mut() { *l += 1; }
         } else {
+            println!("RUNNING {:?}", self.instr);
             let spl = self.instr.split_off(0);
-            self.handle_call(cmd,spl);
+            let scope = self.scope.clone();
+            let pool = self.pool.clone();
+            let join = Box::new(self.handle_call(cmd,spl).and_then(move |ev| { 
+                match ev {
+                    EvalResult::Expand(s, mut r) => expand_with_pool(pool, s, r.make_static()),
+                    EvalResult::Done(v) => Box::new(ok(v))
+                }
+            }).map(Rope::from_value));
+            self.joins.push(join);
         }
     }
 
     fn start_paren(&mut self) {
+        println!("((start paren))");
         self.parens.push(0);
     }
     fn end_paren(&mut self) {
+        println!("((end paren))");
         *( self.calls.last_mut().unwrap() ) += 1;
         let num = self.parens.pop().unwrap();
         if num != 1 {
@@ -189,7 +223,7 @@ impl<'s> Expander<'s> {
             instr: self.instr.split_off(0)
         };
         call.push(Instr::ClosePartial( rope.make_static(), unfinished));
-        self.handle_call(cmd, call);
+        self.final_join = Some(self.handle_call(cmd, call));
     }
     fn text(&mut self, mut rope: Rope<'s>) {
         if self.calls.len() == 0 {
@@ -334,34 +368,56 @@ fn parse<'f, 'r, 's : 'r>(
 
 pub fn expand_with_pool<'f>(
     pool: CpuPool,
-    mut scope: Arc<Scope<'static>>,
-    mut rope: Rope<'static>
+    mut _scope: Arc<Scope<'static>>,
+    mut _rope: Rope<'static>
 ) -> Fut<Value<'static>> {
     // caller should use coerce*
-    Box::new(pool.clone().spawn_fn(move || {
-        let UnfinishedParse {parens, calls, stack, instr} = Arc::get_mut(&mut scope).unwrap().part_done.take().unwrap_or_else(|| {
-            UnfinishedParse {
-                parens: vec![],
-                calls: vec![0],
-                stack: vec![ParseEntry::Text(0, false)],
-                instr: vec![]
+
+    let id = rand::random::<u64>();
+    let ipool = pool.clone();
+    Box::new(
+        pool.clone()
+        .spawn(loop_fn((vec![], _scope, _rope), move |(mut joins, mut scope, mut rope)| {
+            println!("[expand phase 1] {:?}", id);
+            let UnfinishedParse {parens, calls, stack, instr} = Arc::get_mut(&mut scope).unwrap().part_done.take().unwrap_or_else(|| {
+                UnfinishedParse {
+                    parens: vec![],
+                    calls: vec![0],
+                    stack: vec![ParseEntry::Text(0, false)],
+                    instr: vec![]
+                }
+            });
+            let mut expander = Expander::new(ipool.clone(), scope.clone());
+            expander.parens = parens; expander.calls = calls; expander.instr = instr;
+            println!("[expand phase 2] {:?}", id);
+            parse(stack, scope.clone(), rope, &mut expander);
+            println!("[expand phase 3] {:?}", id);
+            joins.extend( expander.joins );
+            if let Some(final_join) = expander.final_join {
+                // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
+                // situations. Do I need it everywhere?
+                Box::new(final_join.map(|ev| {
+                    match ev {
+                        EvalResult::Expand(new_scope, new_rope) => Loop::Continue((joins, new_scope, new_rope)),
+                        EvalResult::Done(val) => {
+                            joins.push(Box::new(ok(Rope::from_value(val))));
+                            Loop::Break(joins)
+                        }
+                    }
+                }))  as Fut<Loop<_,_>>
+            } else {
+                Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
-        });
-        let mut expander = Expander::new(pool, scope.clone());
-        expander.parens = parens; expander.calls = calls; expander.instr = instr;
-        parse(stack, scope.clone(), rope, &mut expander);
-        join_all(expander.joins)
-            .map(|vec| {
+        })
+        .and_then(|joins| { join_all(joins) })
+        .map(move |vec| {
+                println!("[expansion completed] {:?}", id);
                 let mut res = Rope::new();
                 for v in vec.into_iter() { res = res.concat(v); }
-                return res.coerce()
-            })
-    }))
+                let resc = res.coerce();
+                println!("[sending expanded] {:?}", id);
+                resc
+        })
+    ))
 }
 
-pub fn new_expand(
-scope: Arc<Scope<'static>>,
-mut rope: Rope<'static>
-) -> Fut<Value<'static>> {
-    expand_with_pool(CpuPool::new_num_cpus(), scope, rope)
-}

@@ -21,6 +21,7 @@ mod expand;
 
 extern crate futures;
 extern crate futures_cpupool;
+extern crate rand;
 
 use futures_cpupool::{CpuFuture, CpuPool};
 use futures::prelude::*;

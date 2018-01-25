@@ -5,6 +5,7 @@ use value::Value::*;
 use std::rc::Rc;
 use std::borrow::Cow;
 use futures::future::ok;
+use scope::EvalResult::*;
 
 fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>) {
     let mut it = args.into_iter();
@@ -19,7 +20,7 @@ fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Optio
     )
 }
 
-fn change_char<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {
             let needle = n.chars().next().unwrap();
@@ -28,7 +29,7 @@ fn change_char<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
                 ch == needle
             });
             rest.split_char(); // take the matched character out
-            new_expand(inner_scope.clone(),
+            Expand(inner_scope.clone(),
                  prefix.unwrap().concat(
                         Rope::from_slice(replacement)
                 ).concat(rest) 
@@ -38,11 +39,11 @@ fn change_char<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
     }
 }
 
-fn if_eq<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn if_eq<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
             let mut todo = if value_a == value_b { if_true } else { if_false };
-            new_expand(todo.0, *(todo.1))
+            Expand(todo.0, *(todo.1))
         },
         _ => {panic!()}
     }
@@ -51,38 +52,30 @@ fn if_eq<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
 
 // FIXME: not working yet??
 
-fn if_eq_then<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> { 
+fn if_eq_then<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> { 
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
             let mut todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
-            new_expand( finally.0, todo.concat(*finally.1))
+            Expand( finally.0, todo.concat(*finally.1))
         },
         _ => {panic!()}
     }
 }
 
-fn bubble<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
-    match get_args(args) {
-        (Some(Closure(mut closure)), None, ..) => {
-            Box::new(ok(Bubble(closure.force_clone())))
-        },
-        _ => panic!()
-    }
-}
 
-fn end_paren<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn end_paren<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (None, ..) => {
-            Box::new(ok(Value::Str(ArcSlice::from_string(")".to_owned()))))
+            Done(Value::Str(ArcSlice::from_string(")".to_owned())))
         },
         _ => panic!()
     }
 }
 
-fn literal<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn literal<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
-           Box::new (ok(Value::Str( ArcSlice::from_string( closure.to_str().unwrap().to_string()  ))) )
+           Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().to_string()  ))) 
         },
         _ => { panic!() }
     }
@@ -91,7 +84,7 @@ fn literal<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
 // NOTE: can't define inside of parentheses (intentonally -- I think this is the only sensible
 // opton if we want to allow parallelism -- can this be changed?)
 
-fn define<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
@@ -113,7 +106,7 @@ fn define<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
             let mut new_scope = dup_scope(&scope);
             Scope::add_user(&mut new_scope, parts, params, *closure_data);
             // TODO avoid recursion
-            new_expand(Arc::new(new_scope), *to_expand)
+            Expand(Arc::new(new_scope), *to_expand)
         },
         args => {
             panic!("Invalid state {:?}", args);
@@ -122,20 +115,20 @@ fn define<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
     }
 }
 
-fn expand<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn expand<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
-            new_expand(scope.clone(), *contents)
+            Expand(scope.clone(), *contents)
         },
         _ => {panic!("ARG"); }
     }
 }
 
-fn rescope<'s>(args: Vec<Value<'static>>) -> Fut<Value<'static>> {
+fn rescope<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
     (Some(Closure(ValueClosure(inner_scope, _))),
     Some(Closure(ValueClosure(_, contents))),None,..) => {
-         Box::new(ok( Closure(ValueClosure(inner_scope.clone(), contents )) ))
+         Done( Closure(ValueClosure(inner_scope.clone(), contents )) )
     },
     _ => {panic!() }
     }
@@ -162,7 +155,7 @@ pub fn default_scope<'c>() -> Scope<'c> {
     );
     scope.add_native(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ], if_eq);
     scope.add_native(vec![ Ident("if_eq_then".to_owned()), Param, Param, Param, Param, Param ], if_eq_then);
-    scope.add_native(vec![ Ident("bubble".to_owned()), Param ], bubble);
+//    scope.add_native(vec![ Ident("bubble".to_owned()), Param ], bubble);
 
 
     /*

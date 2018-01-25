@@ -19,9 +19,10 @@ use futures_cpupool::*;
 
 
 pub use std::sync::Arc;
+type NativeFn = for<'s> fn(Vec<Value<'static>>) -> EvalResult<'static>;
 
 pub enum Command<'c> {
-    Native(Box<for<'s> fn(Vec<Value<'static>>) -> Fut<Value<'static>>>),
+    Native(NativeFn),
     InOther(Arc<Scope<'c>>),
     User(Vec<String>, Rope<'c>)
 }
@@ -75,10 +76,9 @@ impl<'c> Scope<'c> {
         self.part_done = Some(part);
     }
 
-    pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
-        for<'s> fn(Vec<Value<'static>>) -> Fut<Value<'static>>
+    pub fn add_native(&mut self, parts: Vec<CommandPart>, p:NativeFn
     ) {
-        self.commands.insert(parts, Command::Native(Box::new(p)));
+        self.commands.insert(parts, Command::Native(p));
     }
 
     pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
@@ -112,8 +112,13 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     stat
 }
 
+pub enum EvalResult<'v> {
+    Expand(Arc<Scope<'static>>, Rope<'v>),
+    Done(Value<'v>)
+}
+use EvalResult::*;
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) ->Fut<Value<'v>> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> EvalResult<'v> {
     println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
@@ -135,8 +140,9 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
                  // or a Tagged). coerce sometimes?
                 Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg).make_static());
              }
+             println!("WILL EXPAND");
 
-             new_expand(Arc::new(new_scope), contents.clone().make_static() )
+             Expand(Arc::new(new_scope), contents.clone().make_static())
          }
      }
 }
