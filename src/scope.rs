@@ -8,7 +8,7 @@ use std::mem::replace;
 use std::borrow::Cow;
 
 pub use std::sync::Arc;
-type NativeFn = for<'s> fn(Vec<Value<'static>>) -> EvalResult<'static>;
+type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
 
 #[derive(Clone)]
 enum Command<'c> {
@@ -109,7 +109,7 @@ pub enum EvalResult<'v> {
 }
 use EvalResult::*;
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> EvalResult<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Rope<'v>>) -> EvalResult<'v> {
     println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
@@ -133,7 +133,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
                     &mut new_scope,
                     vec![Ident(name.to_owned())],
                     vec![],
-                    Rope::from_value(arg).make_static()
+                    Rope::from_value(arg.coerce()).make_static()
                 );
              }
              Expand(Arc::new(new_scope), contents.clone().make_static())

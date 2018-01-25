@@ -6,22 +6,34 @@ use std::rc::Rc;
 use std::borrow::Cow;
 use scope::EvalResult::*;
 
-fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>) {
-    let mut it = args.into_iter();
+fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,
+                                              Option<Value>,Option<Value>,Option<Value>,
+                                              Option<Value>) {
+    let mut ait = args.drain(0..).map(|x| { x.coerce() });
     (
-        it.next(),
-        it.next(),
-        it.next(),
-        it.next(),
-        it.next(),
-        it.next(),
-        it.next(),
+        ait.next(),
+        ait.next(),
+        ait.next(),
+        ait.next(),
+        ait.next(),
+        ait.next(),
+        ait.next(),
     )
 }
 
-fn assert<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
-    match get_args(args) {
-        (Some(Str(mut message)), Some(val_a), Some(val_b), None, ..) => {
+fn list<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+/*    if args.len() != 1 { panic!() }
+    let result = args.into_iter().next().unwrap().coerce();
+    println!("LIST {:?}", result); */
+    Done(Value::Str(ArcSlice::from_string("".to_owned())))
+}
+
+fn assert<'s>(mut args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    let t1 = Some(args.remove(0).coerce());
+    let t2 = Some(args.remove(0).coerce());
+    let t3 = Some(args.remove(0).coerce());
+    match (t1,t2,t3) {
+        (Some(Str(mut message)), Some(val_a), Some(val_b)) => {
             // TODO fix threading issue...
             let mark = if val_a == val_b { "✓ " } else { "✗ " };
             if val_a != val_b {
@@ -37,7 +49,7 @@ fn assert<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
 
 
 
-fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn change_char<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {
             let needle = n.to_str().chars().next().unwrap();
@@ -56,7 +68,7 @@ fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn if_eq<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn if_eq<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
             let mut todo = if value_a == value_b { if_true } else { if_false };
@@ -69,7 +81,7 @@ fn if_eq<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
 
 // FIXME: not working yet??
 
-fn if_eq_then<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> { 
+fn if_eq_then<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> { 
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
             let mut todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
@@ -80,7 +92,7 @@ fn if_eq_then<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
 }
 
 
-fn end_paren<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn end_paren<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (None, ..) => {
             Done(Value::Str(ArcSlice::from_string(")".to_owned())))
@@ -89,7 +101,7 @@ fn end_paren<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn literal<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn literal<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
            Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().into_string()  ))) 
@@ -98,7 +110,7 @@ fn literal<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
@@ -127,7 +139,7 @@ fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn expand<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn expand<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
             Expand(scope, *contents)
@@ -136,7 +148,7 @@ fn expand<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn rescope<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+fn rescope<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
     (Some(Closure(ValueClosure(inner_scope, _))),
     Some(Closure(ValueClosure(_, contents))),None,..) => {
@@ -178,5 +190,6 @@ pub fn default_scope<'c>() -> Scope<'c> {
     scope.add_native(vec![ Ident("expand".to_owned()), Param ], expand);
     scope.add_native(vec![ Ident("rescope".to_owned()), Param, Param ], rescope); 
     scope.add_native(vec![ Ident("assert".to_owned()), Param, Param, Param ], assert); 
+    scope.add_native(vec![ Ident("list".to_owned()), Param ], assert); 
     scope
 }

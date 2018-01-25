@@ -126,7 +126,7 @@ impl<'s> PartialEq for Value<'s> {
             (&Str(ref a), &Str(ref b)) => { a.to_str() == b.to_str() },
             (&List(ref a), &List(ref b)) => { a == b }
             (&Tagged(ref a1, ref b1), &Tagged(ref a2, ref b2)) => { a1 == a2 && b1 == b2 },
-            _ => { false }
+            _ => { panic!() }
         }
     }
 }
@@ -276,6 +276,17 @@ impl<'s> Rope<'s> {
             }
         }
         Some(string)
+    }
+
+    pub fn coerce_list(self) -> Value<'s> {
+        let mut vec = vec![];
+        for val in self.data.into_iter() { match val {
+            Chr(c) => {
+                if c.to_str().chars().any(|x| { !x.is_whitespace() }) { panic!(); }
+            },
+            Own(v) => { vec.push(v) }
+        } }
+        Value::List(vec)
     }
 
     pub fn coerce(self) -> Value<'s> {

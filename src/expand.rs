@@ -127,11 +127,8 @@ impl<'s> Expander<'s> {
                 let scope = scope.clone();
                 let items = stack.split_off(idx);
                 let ipool = pool3.clone();
-                let to_push = 
-                    stream::futures_ordered(items)
-                    .map(|x| { x.coerce() })
-                    .collect()
-                    .and_then(move |args| {
+                let to_push = join_all(items).and_then(move |args| {
+                        println!("HERE {:?}", args);
                         match eval(scope, inner_cmd, args) {
                             // TODO decrease pointless recursion
                             EvalResult::Expand(s, r) => expand_with_pool(ipool, s, r) as Fut<Value<'static>>,
@@ -142,10 +139,10 @@ impl<'s> Expander<'s> {
                 stack.push(Box::new(to_push) as Fut<Rope<'static>>);
             }
         } ok((stack as Vec<Fut<Rope<'static>>>, scope)) }).and_then(move |(vec, scope2)| {
-            let r = Box::new(stream::futures_ordered(vec)
-                .map(|x| { x.coerce() })
-                .collect()
-                .map(move |args| { eval(scope2, cmd, args) }));
+            let r = Box::new( 
+                join_all(vec).map(move |args| {
+                    eval(scope2, cmd, args)
+                }));
  /*               .and_then(move |args| { 
                     match eval(scope2, cmd, args) {
                         EvalResult::Expand(s, mut r) => expand_with_pool(pool2, s, r.make_static()),
@@ -170,12 +167,13 @@ impl<'s> Expander<'s> {
             let spl = self.instr.split_off(0);
             let scope = self.scope.clone();
             let pool2 = self.pool.clone();
-            let join = Box::new(CpuPool::new_num_cpus().spawn(self.handle_call(cmd,spl).and_then(move |ev| { 
+            let pool3 = self.pool.clone();
+            let join = Box::new(self.handle_call(cmd,spl).and_then(move |ev| { 
                 match ev {
-                    EvalResult::Expand(s, r) => Box::new(expand_with_pool(pool2, s, r)) as Fut<_>,
+                    EvalResult::Expand(s, r) => Box::new(expand_with_pool(pool3, s, r)) as Fut<_>,
                     EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                 }
-            }).map(Rope::from_value)));
+            }).map(Rope::from_value));
             self.joins.push(join);
         }
     }
@@ -205,7 +203,7 @@ impl<'s> Expander<'s> {
             instr: self.instr.split_off(0)
         };
         call.push(Instr::ClosePartial( rope.make_static(), unfinished));
-        self.final_join = Some(Box::new(CpuPool::new_num_cpus().spawn(self.handle_call(cmd, call))));
+        self.final_join = Some(Box::new((self.handle_call(cmd, call))));
     }
     fn text(&mut self, mut rope: Rope<'s>) {
         if self.calls.len() == 0 {
@@ -367,35 +365,35 @@ pub fn expand_with_pool<'f>(
             let mut expander = Expander::new(ipool.clone(), scope.clone());
             expander.parens = parens; expander.calls = calls; expander.instr = instr;
             parse(stack, scope.clone(), rope, &mut expander);
-            joins.extend( expander.joins );
+            joins.extend( expander.joins.into_iter().map(|j| {
+                Box::new(ipool.spawn(j)) as Fut<_>
+            }) );
             if let Some(final_join) = expander.final_join {
                 // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
                 // situations. Do I need it everywhere?
-                Box::new(final_join.map(move |ev| {
-                    match ev {
+                Box::new(ok(
+                    match final_join.wait().unwrap() {
                         EvalResult::Expand(new_scope, new_rope) => Loop::Continue((joins, new_scope, new_rope)),
                         EvalResult::Done(val) => {
                             joins.push(Box::new(ok(Rope::from_value(val))));
                             Loop::Break(joins)
                         }
                     }
-                }))  as Fut<Loop<_,_>>
+                ))  as Fut<Loop<_,_>>
             } else {
                 Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
         })
-        .map(move |joins : Vec<Fut<_>>| {
-            let mut v : Vec<Rope<'static>> = vec![];
+        .and_then(|joins| { join_all(joins) })
+        .map(move |joins : Vec<_>| {
+            let mut vec : Vec<Rope<'static>> = vec![];
             for j in joins {
-                v.push(pool.spawn(j).wait().unwrap());
+                vec.push(j); //wait().unwrap());
             }
-            v
-        })
-        .map(move |vec| {
-                let mut res = Rope::new();
-                for v in vec.into_iter() { res = res.concat(v); }
-                let resc = res.coerce();
-                resc
+            let mut res = Rope::new();
+            for v in vec.into_iter() { res = res.concat(v); }
+            let resc = res.coerce();
+            resc
         })
     )
 }

@@ -6,6 +6,7 @@
 #assert(indir)(Hello world)(#x)
 
 #define(z :y){#y world};
+#define(abc :y){#y world};
 #assert(param)(Hello world)(#z(Hello))
 
 #define(q :y){#h: #expand(#rescope(#y){#w} ) #w };
@@ -30,4 +31,11 @@
 #assert(recur_2)(oh yikes, hello)(#recur(there))
 
 #if_eq_then(#h)(Yolo){ERR1}{#define(w){as a test:}; #define(z){hello world};};
+
 #assert(if_eq_then)(as a test: hello world)(#w #z)
+
+
+#assert(list)(XY)(#list(
+	#literal{X}
+	#literal{Y}
+))
