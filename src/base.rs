@@ -29,13 +29,9 @@ fn list<'s>(args: Vec<Rope>) -> EvalResult {
 }
 
 fn assert<'s>(mut args: Vec<Rope>) -> EvalResult {
-    println!("HERE 32 {:?}", args);
     let t1 = Some(args.remove(0).coerce());
-    println!("HERE 34 {:?}", args);
     let t2 = Some(args.remove(0).coerce());
-    println!("HERE 36 {:?}", args);
     let t3 = Some(args.remove(0).coerce());
-    println!("HERE 38 {:?}", args);
     match (t1,t2,t3) {
         (Some(Str(mut message)), Some(val_a), Some(val_b)) => {
             // TODO fix threading issue...
@@ -194,6 +190,6 @@ pub fn default_scope<'c>() -> Scope {
     scope.add_native(vec![ Ident("expand".to_owned()), Param ], expand);
     scope.add_native(vec![ Ident("rescope".to_owned()), Param, Param ], rescope); 
     scope.add_native(vec![ Ident("assert".to_owned()), Param, Param, Param ], assert); 
-    scope.add_native(vec![ Ident("list".to_owned()), Param ], list); 
+    scope.add_native(vec![ Ident("list".to_owned()), Param ], assert); 
     scope
 }

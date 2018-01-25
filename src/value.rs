@@ -22,7 +22,6 @@ impl ValueClosure {
     }
 }
 
-#[derive(Clone)]
 pub struct ArcSlice {
     string: Arc<String>,
     range: Range<usize>
@@ -100,6 +99,14 @@ impl Add for ArcSlice {
 }
 
 
+impl Clone for ArcSlice {
+    fn clone(&self) -> ArcSlice {
+        return ArcSlice {
+            string: self.string.clone(),
+            range: self.range.clone()
+        }
+    }
+}
 
 
 
@@ -204,10 +211,7 @@ impl Leaf {
     }
 }
 
-unsafe impl Sync for Rope {}
-unsafe impl Send for Rope {}
-unsafe impl Send for Value {}
-unsafe impl Send for ArcSlice {}
+
 
 impl Rope {
     pub fn new() -> Rope {
