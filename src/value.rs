@@ -48,14 +48,15 @@ impl<'s> ArcSlice<'s> {
     
    pub fn into_string(self) -> String {
         let range = self.range.clone();
-//        let res = Arc::try_unwrap(self.string.into_owned())
-//            .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
-        (&self.string[range.clone()]).to_owned()
+        let res = Arc::try_unwrap(self.string.into_owned())
+            .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
+            .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
+        res
     }
 
-    fn make_static(&self) -> ArcSlice<'static> {
+    fn make_static(&mut self) -> ArcSlice<'static> {
         return ArcSlice {
-            string: Cow::Owned(self.string.clone().into_owned()),
+            string: Cow::Owned(self.string.to_mut().clone()),
             range: self.range.clone()
         }
     }

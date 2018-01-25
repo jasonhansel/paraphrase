@@ -6,12 +6,9 @@ use futures_cpupool::*;
 use futures::stream;
 use rand;
 use std::panic::UnwindSafe;
-use std::thread;
-use std::thread::JoinHandle;
 
 
 // TODO: clone() less
-// TODO: Revert to futures
 
 #[derive(Clone,Debug)]
 enum ParseEntry {
@@ -50,17 +47,12 @@ pub struct UnfinishedParse {
 
 pub type Fut<T> = Box<Future<Item=T,Error=()> + Send>;
 
-enum Chunk<T> {
-    Text(Rope<'static>),
-    Join(JoinHandle<T>)
-}
-
 struct Expander<'s> {
     calls: Vec<u16>,
     parens: Vec<u16>,
     instr: Vec<Instr>,
-    joins: Vec<Chunk<Rope<'s>>>,
-    final_join: Option<JoinHandle<EvalResult<'s>>>,
+    joins: Vec<Fut<Rope<'s>>>,
+    final_join: Option<Fut<EvalResult<'s>>>,
 
     pool: CpuPool,
     scope: Arc<Scope<'static>>
@@ -68,8 +60,8 @@ struct Expander<'s> {
 
 
 // TODO: is this really concurrent?
-impl Expander<'static> {
-    fn new(pool: CpuPool, scope:Arc<Scope<'static>>) -> Expander<'static> {
+impl<'s> Expander<'s> {
+    fn new(pool: CpuPool, scope:Arc<Scope<'static>>) -> Expander<'s> {
         Expander {
             parens: vec![0],
             calls: vec![],
@@ -95,85 +87,78 @@ impl Expander<'static> {
         }
         self.instr.split_off(idx)
     }
-    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> JoinHandle<EvalResult<'static>> {
+    fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> Fut<EvalResult<'static>> {
+        let pool = self.pool.clone();
+        let pool3 = pool.clone();
         let scope = self.scope.clone();
-        thread::spawn(move ||{
-            let mut stack : Vec<Chunk<Rope>> = vec![]; 
-            for i in instr { match i {
-                Instr::StartCmd => {
-                }
-                Instr::Push(r) => {
-                    stack.push(
-                        Chunk::Text(r)
-                    );
-                },
-                Instr::Concat(cnt) => {
-                    let idx = stack.len() - cnt as usize;
-                    let scope = scope.clone();
-                    let items = stack.split_off(idx);
-                // TODO: fix deadlocks, add thread pool, then check concurrency
-                    stack.push(Chunk::Join(thread::spawn(move || {
-                        items
-                            .into_iter()
-                            .map(|x| {
-                                match x {
-                                    Chunk::Text(r) => r,
-                                    Chunk::Join(j) => j.join().unwrap()
-                                }
-                            })
-                            .fold(Rope::new(), |a,b| { a.concat(b) })
-                    })));
-                },
-                Instr::ClosePartial(r, unf) => {
-                    let mut new_scope = dup_scope(&scope);
-                    new_scope.part_done(unf);
-                    let v = Rope::from_value(  Value::Closure ( ValueClosure( Arc::new(new_scope), Box::new(r)  )) ) ;
-                    stack.push(
-                        Chunk::Text(v)
-                    );
-                },
-                Instr::Close(r) => {
-                    let stat = r;
-                    let v = Rope::from_value(  Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ) ;
-                    stack.push(Chunk::Text(v));
-                }
-                Instr::Call(cnt, inner_cmd) => {
-                    let idx = stack.len() - cnt as usize;
-                    let scope = scope.clone();
-                    let items = stack.split_off(idx);
-                    stack.push(Chunk::Join(thread::spawn(|| { 
-                       let coerced = items.into_iter().map(|x| {
-                           match x {
-                               Chunk::Text(r) => r,
-                               Chunk::Join(j) => j.join().unwrap()
-                           }
-                       }).collect::<Vec<Rope<'static>>>();
-
-                        match eval(scope, inner_cmd, coerced) {
+        Box::new(stream::iter_ok(instr.into_iter()).fold((vec![], scope.clone()), move |(mut stack, scope): (Vec<Fut<Rope<'static>>>, Arc<Scope<'static>>), i| {
+            match i {
+            Instr::StartCmd => {
+            }
+            Instr::Push(r) => {
+                stack.push(Box::new(ok(r)) as Fut<Rope<'static>>);
+            },
+            Instr::Concat(cnt) => {
+                let idx = stack.len() - cnt as usize;
+                let items = stack.split_off(idx);
+                let to_push = 
+                    join_all(items)
+                    .map(|vec| {
+                        let mut rope = Rope::new();
+                        for r in vec { rope = rope.concat(r); }
+                        rope
+                    })
+                ;
+                stack.push(Box::new(to_push) as Fut<Rope<'static>>);
+            },
+            Instr::ClosePartial(r, unf) => {
+                let mut new_scope = dup_scope(&scope);
+                new_scope.part_done(unf);
+                let v = Rope::from_value(  Value::Closure ( ValueClosure( Arc::new(new_scope), Box::new(r)  )) ) ;
+                stack.push(Box::new(ok(v)));
+            },
+            Instr::Close(r) => {
+                let stat = r;
+                let v = Rope::from_value(  Value::Closure ( ValueClosure( scope.clone(), Box::new(stat)  )) ) ;
+                stack.push(Box::new(ok(v)));
+            }
+            Instr::Call(cnt, inner_cmd) => {
+                let idx = stack.len() - cnt as usize;
+                let scope = scope.clone();
+                let items = stack.split_off(idx);
+                let ipool = pool3.clone();
+                let to_push = join_all(items).and_then(move |args| {
+                        println!("HERE {:?}", args);
+                        match eval(scope, inner_cmd, args) {
                             // TODO decrease pointless recursion
-                            EvalResult::Expand(s, r) => Rope::from_value(expand_with_pool(CpuPool::new_num_cpus(), s, r).join().unwrap()),
-                            EvalResult::Done(v) => Rope::from_value(v)
+                            EvalResult::Expand(s, r) => expand_with_pool(ipool, s, r) as Fut<Value<'static>>,
+                            EvalResult::Done(v) => Box::new(ok(v)) as Fut<Value<'static>>
                         }
-                    })));
-                }
-            } }
-            eval(scope, cmd, stack.into_iter()
-                .map(|x| {
-                    match x {
-                        Chunk::Text(r) => r,
-                        Chunk::Join(j) => j.join().unwrap()
+                    })
+                    .map(|v| { Rope::from_value(v) });
+                stack.push(Box::new(to_push) as Fut<Rope<'static>>);
+            }
+        } ok((stack as Vec<Fut<Rope<'static>>>, scope)) }).and_then(move |(vec, scope2)| {
+            let r = Box::new( 
+                join_all(vec).map(move |args| {
+                    eval(scope2, cmd, args)
+                }));
+ /*               .and_then(move |args| { 
+                    match eval(scope2, cmd, args) {
+                        EvalResult::Expand(s, mut r) => expand_with_pool(pool2, s, r.make_static()),
+                        EvalResult::Done(v) => Box::new(ok(v))
                     }
                 })
-                .collect()
-            )
-        })
+                .map(Rope::from_value); */
+            return r as Fut<EvalResult<'static>>
+        }))
     }
 
     fn start_command(&mut self) {
         self.instr.push(Instr::StartCmd);
         self.calls.push(0);
     }
-    fn end_command(&mut self, cmd: Vec<CommandPart>) {
+    fn end_command(&mut self, cmd: Vec<CommandPart>, scope: Arc<Scope<'static>>) {
         let call_len = self.calls.pop().unwrap();
         if self.calls.len() > 0 {
             self.instr.push(Instr::Call(call_len, cmd));
@@ -183,17 +168,13 @@ impl Expander<'static> {
             let scope = self.scope.clone();
             let pool2 = self.pool.clone();
             let pool3 = self.pool.clone();
-            let join = self.handle_call(cmd,spl);
-            self.joins.push(Chunk::Join(thread::spawn(||{  
-                match join.join().unwrap() {
-                    EvalResult::Expand(s, r) => {
-                        Rope::from_value(expand_with_pool(CpuPool::new_num_cpus(), s, r).join().unwrap())
-                    },
-                    EvalResult::Done(v) => {
-                        Rope::from_value(v)
-                    }
+            let join = Box::new(self.handle_call(cmd,spl).and_then(move |ev| { 
+                match ev {
+                    EvalResult::Expand(s, r) => Box::new(expand_with_pool(pool3, s, r)) as Fut<_>,
+                    EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                 }
-            })));
+            }).map(Rope::from_value));
+            self.joins.push(join);
         }
     }
 
@@ -207,12 +188,12 @@ impl Expander<'static> {
             self.instr.push(Instr::Concat(num));
         }
     }
-    fn raw_param<'s>(&mut self, mut rope: Rope<'s>) {
+    fn raw_param(&mut self, mut rope: Rope<'s>) {
         *( self.calls.last_mut().unwrap() ) += 1;
         // TODO avoid clones here
         self.instr.push(Instr::Close(rope.make_static()));
     }
-    fn semi_param<'s>(&mut self, stack: Vec<ParseEntry>, mut rope: Rope<'s>, cmd: Vec<CommandPart>) {
+    fn semi_param(&mut self, stack: Vec<ParseEntry>, mut rope: Rope<'s>, cmd: Vec<CommandPart>) {
         let mut call = self.get_call();
         self.calls.pop();
         let unfinished = UnfinishedParse {
@@ -222,11 +203,11 @@ impl Expander<'static> {
             instr: self.instr.split_off(0)
         };
         call.push(Instr::ClosePartial( rope.make_static(), unfinished));
-        self.final_join = Some(self.handle_call(cmd, call));
+        self.final_join = Some(Box::new((self.handle_call(cmd, call))));
     }
-    fn text<'s>(&mut self, mut rope: Rope<'s>) {
+    fn text(&mut self, mut rope: Rope<'s>) {
         if self.calls.len() == 0 {
-            self.joins.push(Chunk::Text(rope.make_static()));
+            self.joins.push(Box::new(ok(rope.make_static())));
         } else {
             if let Some(l) = self.parens.last_mut() { *l += 1; }
             self.instr.push(Instr::Push(rope.make_static()));
@@ -245,14 +226,14 @@ fn parse<'f, 'r, 's : 'r>(
     mut stack: Vec<ParseEntry>,
     scope: Arc<Scope<'static>>,
     mut rope: Rope<'s>,
-    visitor: &mut Expander<'static>
+    visitor: &mut Expander<'s>
 ){
     while let Some(current) = stack.pop() { match current {
         ParseEntry::Command(mut parts) => {
             // TODO: multi-part commands, variadic macros (may never impl - too error prone)
             // TODO: breaks intermacro text
             if scope.has_command(&parts) {
-                visitor.end_command(parts.split_off(0));
+                visitor.end_command(parts.split_off(0), scope.clone());
                 // continue to next work item
             }  else {
                 rope.split_at(false, false, &mut |ch : char| {
@@ -367,16 +348,12 @@ pub fn expand_with_pool<'f>(
     pool: CpuPool,
     mut _scope: Arc<Scope<'static>>,
     mut _rope: Rope<'static>
-) -> JoinHandle<Value<'static>> {
+) -> Fut<Value<'static>> {
     // TODO: why do we need a new CPUPOOL here:
     let id = rand::random::<u64>();
     let ipool = pool.clone();
-    thread::spawn(move || {
-        let mut scope = _scope.clone();
-        let mut rope = _rope;
-        let mut joins : Vec<Chunk<Rope>> = vec![];
-        let mut last : Option<Value> = None;
-        loop {
+    Box::new(
+        loop_fn(( (vec![] as Vec<Fut<Rope<'static>>>), _scope, _rope), move |(mut joins, mut scope, mut rope)| {
             let UnfinishedParse {parens, calls, stack, instr} = Arc::make_mut(&mut scope).part_done.take().unwrap_or_else(|| {
                 UnfinishedParse {
                     parens: vec![],
@@ -388,39 +365,36 @@ pub fn expand_with_pool<'f>(
             let mut expander = Expander::new(ipool.clone(), scope.clone());
             expander.parens = parens; expander.calls = calls; expander.instr = instr;
             parse(stack, scope.clone(), rope, &mut expander);
-
-            // TODO avoid all these joins
-            joins.extend(expander.joins);
-
+            joins.extend( expander.joins.into_iter().map(|j| {
+                Box::new(ipool.spawn(j)) as Fut<_>
+            }) );
             if let Some(final_join) = expander.final_join {
-                match final_join.join().unwrap() {
-                    EvalResult::Expand(new_scope, new_rope) => {
-                        scope = new_scope;
-                        rope = new_rope;
+                // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
+                // situations. Do I need it everywhere?
+                Box::new(ok(
+                    match final_join.wait().unwrap() {
+                        EvalResult::Expand(new_scope, new_rope) => Loop::Continue((joins, new_scope, new_rope)),
+                        EvalResult::Done(val) => {
+                            joins.push(Box::new(ok(Rope::from_value(val))));
+                            Loop::Break(joins)
+                        }
                     }
-                    EvalResult::Done(val) => {
-                        last = Some( val );
-                        break;
-                    }
-                }
+                ))  as Fut<Loop<_,_>>
             } else {
-                break;
+                Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
-        }
-        let mut re = joins.into_iter().fold(Rope::new(), |a, mut to_join| {
-            a.concat(match to_join {
-                Chunk::Text(r) => {
-                    r
-                }
-                Chunk::Join(j) => {
-                    j.join().unwrap()
-                }
-            })
-        });
-        if let Some(f) = last {
-            re = re.concat(Rope::from_value(f));
-        }
-        re.coerce()
-    })
+        })
+        .and_then(|joins| { join_all(joins) })
+        .map(move |joins : Vec<_>| {
+            let mut vec : Vec<Rope<'static>> = vec![];
+            for j in joins {
+                vec.push(j); //wait().unwrap());
+            }
+            let mut res = Rope::new();
+            for v in vec.into_iter() { res = res.concat(v); }
+            let resc = res.coerce();
+            resc
+        })
+    )
 }
 
