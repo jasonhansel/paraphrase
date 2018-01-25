@@ -113,6 +113,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
     println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
+             println!("REFERRING {:?}", args);
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
