@@ -228,8 +228,8 @@ impl<'s> Rope<'s> {
         return Rope {
             data: {
                 let mut l = LinkedList::new();
-                l.append(&mut self.data);
                 l.append(&mut other.data);
+                l.append(&mut self.data);
                 l
             }
         }
@@ -246,7 +246,7 @@ impl<'s> Rope<'s> {
     }
     fn should_be_string(&self) -> bool {
         let mut count = 0;
-        for leaf in self.data.iter() {
+        for leaf in self.data.iter().rev() {
             match leaf {
                 &Leaf::Chr(ref c) => { if c.to_str().chars().any(|x| { !x.is_whitespace() }) { return true } }
                 &Own(_) => { count += 1 }
@@ -260,7 +260,7 @@ impl<'s> Rope<'s> {
             string: Cow::Owned(Arc::new("".to_owned())),
             range: 0..0
         };
-        for v in self.data.into_iter() {
+        for v in self.data.into_iter().rev() {
             match v.to_str() {
                 // TODO avoid copies
                 Some(x) => { string = string.concat(x); },
@@ -289,59 +289,57 @@ impl<'s> Rope<'s> {
         // TODO can optimize the below. would vecs be faster than linked lists?
         let mut prefix = Rope { data: LinkedList::new() };
         while !self.data.is_empty() {
-            let mut done = false;
-            let mut front = self.data.pop_front().unwrap();
+            let front = self.data.pop_back().unwrap();
             match front {
                 Leaf::Own(_) => {
                     if match_val {
-                        prefix.data.push_back(front);
+                        prefix.data.push_front(front);
                     } else {
-                        self.data.push_front(front);
-                        return (Some(prefix));
+                        self.data.push_back(front);
+                        return Some(prefix);
                     }
                 },
                 Leaf::Chr(mut slice) => {
                     if let Some(idx) = slice.to_str().find(|x| { matcher(x) }) {
-                        println!("Retrieve {:?} {:?}", slice.to_str(), idx);
                         if idx > 0 {
                             let start = slice.split_at(idx);
-                            prefix.data.push_back(Leaf::Chr(start));
+                            prefix.data.push_front(Leaf::Chr(start));
                         }
-                        self.data.push_front(Leaf::Chr(slice));
+                        self.data.push_back(Leaf::Chr(slice));
                         return Some(prefix)
                     } else {
-                        prefix.data.push_back(Leaf::Chr(slice));
+                        prefix.data.push_front(Leaf::Chr(slice));
                     }
                 }
             };
         }
         if match_eof {
-            return (Some(prefix))
+            return Some(prefix)
         } else {
             *self = prefix;
-            return ( None)
+            return None
         }
     }
 
     pub fn get_char(&self) -> Option<char> {
-        for leaf in self.data.iter() {
-            match leaf {
-                &Leaf::Own(_) => { panic!("Unexpected value") },
-                &Leaf::Chr(ref ch) => {
-                    if let Some(c) = ch.to_str().chars().next() {
-                        return Some(c)
-                    }
-                }
+        match self.data.back()? {
+            &Leaf::Own(_) => { None },
+            &Leaf::Chr(ref ch) => {
+                ch.to_str().chars().next()
             }
         }
-        None
     }
 
     pub fn split_char(&mut self) -> Option<char> {
-        match self.data.front_mut() {
-            Some(&mut Leaf::Chr(ref mut slice)) => { slice.split_first() }
-            _ => { None }
-        }
+        let mut first = true;
+        return self.split_at(false, true, &mut |_| {
+            if first == true {
+                first = false;
+                false
+            } else {
+                true
+            }
+        }).and_then(|x| x.get_char());
     }
 
 }

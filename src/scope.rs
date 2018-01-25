@@ -130,7 +130,12 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg).make_static());
+                Scope::add_user(
+                    &mut new_scope,
+                    vec![Ident(name.to_owned())],
+                    vec![],
+                    Rope::from_value(arg).make_static()
+                );
              }
              println!("WILL EXPAND");
 
