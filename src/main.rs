@@ -45,14 +45,14 @@ fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
 fn it_works() {
     // TODO: organize a real test suite
     let mut chars = read_file(String::new(), "tests/1-simple.pp").unwrap();
-    let scope = Arc::new(default_scope());
     let pool = CpuPool::new_num_cpus();
-    let results = expand_with_pool(pool, Rope::new(), scope.clone(), chars)
+    let results = expand_with_pool(pool, Arc::new(default_scope()), chars)
         .wait()
         .unwrap()
-        .coerce_str(scope)
-        .unwrap();
-    println!("||\n{}||", results.to_string() );
+        .as_str()
+        .unwrap()
+        .into_string();
+    println!("||\n{}||", results );
 }
 
 fn main() {

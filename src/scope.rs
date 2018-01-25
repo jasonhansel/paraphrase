@@ -21,7 +21,7 @@ use futures_cpupool::*;
 pub use std::sync::Arc;
 
 pub enum Command<'c> {
-    Native(Box<for<'s> fn(Vec<Value<'s>>) -> NativeResult<'s>>),
+    Native(Box<for<'s> fn(Vec<Value<'static>>) -> Fut<Value<'static>>>),
     InOther(Arc<Scope<'c>>),
     User(Vec<String>, Rope<'c>)
 }
@@ -47,7 +47,8 @@ pub use CommandPart::*;
 
 pub struct Scope<'c> {
     pub sigil: char,
-    commands: HashMap<Vec<CommandPart>, Command<'c>>
+    commands: HashMap<Vec<CommandPart>, Command<'c>>,
+    pub part_done: Option<UnfinishedParse>
 }
 
 impl<'c> Debug for Scope<'c> {
@@ -66,22 +67,25 @@ impl<'c> Scope<'c> {
     pub fn new(sigil: char) -> Scope<'c> {
         Scope {
             sigil: sigil,
-            commands: HashMap::new()
+            commands: HashMap::new(),
+            part_done: None
         }
+    }
+    pub fn part_done(&mut self, part: UnfinishedParse) {
+        self.part_done = Some(part);
     }
 
     pub fn add_native(&mut self, parts: Vec<CommandPart>, p:
-        for<'s> fn(Vec<Value<'s>>) -> Value<'s>
+        for<'s> fn(Vec<Value<'static>>) -> Fut<Value<'static>>
     ) {
         self.commands.insert(parts, Command::Native(Box::new(p)));
     }
 
-    pub fn add_user<'s>(mut this: &mut Arc<Scope>, parts: Vec<CommandPart>,
+    pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
                         params: Vec<String>,
-                        rope: Rope<'s>) {
-        Arc::get_mut(&mut this).unwrap()
-            .commands
-            .insert(parts, Command::User(params, rope.make_static()));
+                        rope: Rope<'c>) {
+        this.commands
+            .insert(parts, Command::User(params, rope));
     }
 
     pub fn has_command(&self, parts: &[CommandPart]) -> bool {
@@ -90,10 +94,14 @@ impl<'c> Scope<'c> {
 }
 
 
+
 pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
-    let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new() };
+    if scope.part_done.is_some() {
+        panic!("Cannot define in partially-evaluated scopes!");
+    }
+    let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new(), part_done: None };
     for (key, val) in scope.commands.iter() {
         let other_scope = match val {
             &InOther(ref isc) => { isc.clone() }
@@ -105,13 +113,14 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
 }
 
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) -> Value<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Value<'v>>) ->Fut<Value<'v>> {
+    println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
-             code(args)
+             code(args.into_iter().map(|mut x| { x.make_static() }).collect())
          },
          &Command::User(ref arg_names, ref contents) => {
              // todo handle args
@@ -120,16 +129,14 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
              if arg_names.len() != args.len() {
                  panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
              }
-             let mut new_scope = Arc::new(new_scope);
              for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg));
+                Scope::add_user(&mut new_scope, vec![Ident(name.to_owned())], vec![], Rope::from_value(arg).make_static());
              }
 
-             let out = new_expand(new_scope, contents.dupe()).make_static();
-             out
+             new_expand(Arc::new(new_scope), contents.clone().make_static() )
          }
      }
 }

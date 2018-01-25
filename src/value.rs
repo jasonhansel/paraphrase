@@ -25,11 +25,17 @@ impl<'s> ValueClosure<'s> {
     }
 }
 
-#[derive(Debug)]
 pub struct ArcSlice<'s> {
     string: Cow<'s, Arc<String>>,
     range: Range<usize>
 }
+impl<'s> fmt::Debug for ArcSlice<'s> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.to_str().fmt(f)
+    }
+}
+
+
 
 impl<'s> ArcSlice<'s> {
     pub fn from_string(s: String) -> ArcSlice<'static> {
@@ -252,6 +258,12 @@ impl<'s> Value<'s> {
             }
         return None
     }
+    pub fn as_str(self) -> Option<ArcSlice<'s>> {
+        match self {
+            Str(s) => Some(s),
+            _ => None
+        }
+    }
 
 }
 impl<'s> Leaf<'s> {
@@ -384,7 +396,7 @@ impl<'s> Rope<'s> {
         }
         Some(string)
     }
-
+/*
     pub fn coerce_bubble(mut self, scope: Arc<Scope<'static>>) -> Value<'s> { 
         if self.should_be_bubble_concat(scope.clone()) {
             return new_expand(scope.clone(), self.to_bubble_rope());
@@ -409,9 +421,10 @@ impl<'s> Rope<'s> {
             panic!("Failure");
         }
     }
-
+*/
     pub fn coerce(self) -> Value<'s> {
        if self.should_be_string() {
+           println!("HERE {:?}", self);
             Value::Str( self.to_str().unwrap() )
         } else {
             for val in self.data.into_iter() { match val {
