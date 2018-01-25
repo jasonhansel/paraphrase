@@ -75,11 +75,11 @@ impl ArcSlice {
         self.range.len()
     }
 
-    fn split_at<'t>(mut self, idx: usize) -> (ArcSlice, ArcSlice) {
+    fn split_at<'t>(&'t mut self, idx: usize) -> ArcSlice {
         println!("SPLITTING B!");
         let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
-        self.range.start += idx;
-        (left, self)
+//        (*self).range.start += idx;
+        left
     }
 }
 
@@ -320,12 +320,10 @@ impl Rope {
                 Leaf::Chr(mut slice) => {
                     if let Some(idx) = slice.to_str().find(|x| { matcher(x) }) {
                         if idx > 0 {
-                            let (start, rest) = slice.split_at(idx);
+                            let start = slice.split_at(idx);
                             prefix.data.push_front(Leaf::Chr(start));
-                            self.data.push_back(Leaf::Chr(rest));
-                        } else {
-                            self.data.push_back(Leaf::Chr(slice));
                         }
+                        self.data.push_back(Leaf::Chr(slice));
                         return Some(prefix)
                     } else {
                         prefix.data.push_front(Leaf::Chr(slice));
