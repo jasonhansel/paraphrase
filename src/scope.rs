@@ -137,8 +137,6 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
                     Rope::from_value(arg).make_static()
                 );
              }
-             println!("WILL EXPAND");
-
              Expand(Arc::new(new_scope), contents.clone().make_static())
          }
      }
