@@ -1,16 +1,11 @@
 
 use std::fmt;
-use std::rc::Rc;
 use scope::Scope;
 use std::borrow::Cow;
-use std::mem::replace;
-use expand::*;
 use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
-use std::io;
-use std::str::Chars;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
@@ -52,13 +47,11 @@ impl<'s> ArcSlice<'s> {
     pub fn to_string(&self) -> String {
         self.to_str().to_owned()
     }
-    pub fn into_string(mut self) -> String {
-        println!("INTOIZE {:?} {:?}", self.string, self.range);
+    pub fn into_string(self) -> String {
         let range = self.range.clone();
         let res = Arc::try_unwrap(self.string.into_owned() )
             .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
             .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
-        println!("INTOIZED {:?}", res);
         res
     }
     fn make_static(&mut self) -> ArcSlice<'static> {
@@ -76,9 +69,7 @@ impl<'s> ArcSlice<'s> {
             None
         }
     }
-    pub fn chars(&'s self) -> Chars<'s> {
-        self.to_str().chars()
-    }
+
     fn len(&self) -> usize {
         self.range.len()
     }
@@ -480,7 +471,7 @@ impl<'s> Rope<'s> {
             match leaf {
                 &Leaf::Own(_) => { panic!("Unexpected value") },
                 &Leaf::Chr(ref ch) => {
-                    if let Some(c) = ch.chars().next() {
+                    if let Some(c) = ch.to_str().chars().next() {
                         return Some(c)
                     }
                 }

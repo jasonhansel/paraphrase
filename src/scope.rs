@@ -6,17 +6,6 @@ use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
 use std::mem::replace;
 use std::borrow::Cow;
-use futures::prelude::*;
-use futures::future;
-use futures::future::Future;
-use futures::future::*;
-use futures::task::*;
-use futures::executor::*;
-use futures::sync::*;
-use futures::*;
-use futures_cpupool::*;
-
-
 
 pub use std::sync::Arc;
 type NativeFn = for<'s> fn(Vec<Value<'static>>) -> EvalResult<'static>;

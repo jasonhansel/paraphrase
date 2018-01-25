@@ -4,7 +4,6 @@ use expand::*;
 use value::Value::*;
 use std::rc::Rc;
 use std::borrow::Cow;
-use futures::future::ok;
 use scope::EvalResult::*;
 
 fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>,Option<Value>) {
@@ -23,7 +22,7 @@ fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Optio
 fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {
-            let needle = n.chars().next().unwrap();
+            let needle = n.to_str().chars().next().unwrap();
             let mut rest = h.make_static();
             let prefix = rest.split_at(true, false, &mut |ch| {
                 ch == needle

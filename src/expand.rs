@@ -1,11 +1,7 @@
 use scope::*;
 use value::*;
-use std::borrow::Cow;
-use std::rc::Rc;
-use std::thread::{spawn,JoinHandle};
-use std::sync::atomic::{AtomicUsize,Ordering};
-use futures::future::*;
-use futures::future::Future;
+use std::sync::atomic::{AtomicUsize};
+use futures::future::{ok,join_all,loop_fn,Loop};
 use futures::prelude::*;
 use futures_cpupool::*;
 use futures::stream;
@@ -66,6 +62,7 @@ struct Expander<'s> {
 }
 
 
+// TODO: is this really concurrent?
 impl<'s> Expander<'s> {
     fn new(pool: CpuPool, scope:Arc<Scope<'static>>) -> Expander<'s> {
         Expander {
@@ -95,9 +92,10 @@ impl<'s> Expander<'s> {
     }
     fn handle_call(&mut self, cmd: Vec<CommandPart>, instr: Vec<Instr>) -> Fut<EvalResult<'static>> {
         let pool = self.pool.clone();
-        let pool2 = self.pool.clone();
+        let pool3 = pool.clone();
+        let scope = self.scope.clone();
         println!("[processing phase 1]");
-        Box::new(stream::iter_ok(instr.into_iter()).fold((vec![], self.scope.clone()), move |(mut stack, scope): (Vec<Fut<Rope<'static>>>, Arc<Scope<'static>>), i| {
+        Box::new(stream::iter_ok(instr.into_iter()).fold((vec![], scope.clone()), move |(mut stack, scope): (Vec<Fut<Rope<'static>>>, Arc<Scope<'static>>), i| {
             match i {
             Instr::StartCmd => {
             }
@@ -105,15 +103,17 @@ impl<'s> Expander<'s> {
                 stack.push(Box::new(ok(r)));
             },
             Instr::Concat(cnt) => {
-                let mut new_rope = Rope::new();
-                let idx = stack.len() - cnt as usize;
                 println!(">start concat<");
-                let to_push = join_all(stack.split_off(idx))
+                let idx = stack.len() - cnt as usize;
+                let items = stack.split_off(idx);
+                let to_push = 
+                    join_all(items)
                     .map(|vec| {
                         let mut rope = Rope::new();
                         for r in vec { rope = rope.concat(r); }
                         rope
-                    });
+                    })
+                ;
                 println!(">end concat<");
                 stack.push(Box::new(to_push));
             },
@@ -131,15 +131,17 @@ impl<'s> Expander<'s> {
             Instr::Call(cnt, inner_cmd) => {
                 let idx = stack.len() - cnt as usize;
                 println!(">start call<");
-                let pool = pool.clone();
                 let scope = scope.clone();
+                let items = stack.split_off(idx);
+                let ipool = pool3.clone();
                 // TODO: is everything really concurrent here?
-                let to_push = stream::futures_ordered(stack.split_off(idx).into_iter())
+                let to_push = 
+                    stream::futures_ordered(items)
                     .map(|x| { println!("COERCING {:?}", x); x.coerce() })
                     .collect()
                     .and_then(move |args| {
                         match eval(scope, inner_cmd, args) {
-                            EvalResult::Expand(s, r) => Box::new(pool.clone().spawn(expand_with_pool(pool, s, r))) as Fut<_>,
+                            EvalResult::Expand(s, r) => Box::new((expand_with_pool(ipool, s, r))) as Fut<_>,
                             EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                         }
                     })
@@ -179,13 +181,13 @@ impl<'s> Expander<'s> {
             println!("RUNNING {:?}", self.instr);
             let spl = self.instr.split_off(0);
             let scope = self.scope.clone();
-            let pool = self.pool.clone();
-            let join = Box::new(self.handle_call(cmd,spl).and_then(move |ev| { 
+            let pool2 = self.pool.clone();
+            let join = Box::new(CpuPool::new_num_cpus().spawn(self.handle_call(cmd,spl).and_then(move |ev| { 
                 match ev {
-                    EvalResult::Expand(s, r) => Box::new(pool.clone().spawn(expand_with_pool(pool, s, r))) as Fut<_>,
+                    EvalResult::Expand(s, r) => Box::new(expand_with_pool(pool2, s, r)) as Fut<_>,
                     EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                 }
-            }).map(Rope::from_value));
+            }).map(Rope::from_value)));
             self.joins.push(join);
         }
     }
@@ -217,7 +219,7 @@ impl<'s> Expander<'s> {
             instr: self.instr.split_off(0)
         };
         call.push(Instr::ClosePartial( rope.make_static(), unfinished));
-        self.final_join = Some(self.handle_call(cmd, call));
+        self.final_join = Some(Box::new(CpuPool::new_num_cpus().spawn(self.handle_call(cmd, call))));
     }
     fn text(&mut self, mut rope: Rope<'s>) {
         if self.calls.len() == 0 {
@@ -365,13 +367,11 @@ pub fn expand_with_pool<'f>(
     mut _scope: Arc<Scope<'static>>,
     mut _rope: Rope<'static>
 ) -> Fut<Value<'static>> {
-    // caller should use coerce*
-
+    // TODO: why do we need a new CPUPOOL here:
     let id = rand::random::<u64>();
-    let ipool = CpuPool::new_num_cpus(); //pool.clone();
+    let ipool = pool.clone();
     Box::new(
-        pool.clone()
-        .spawn(loop_fn((vec![], _scope, _rope), move |(mut joins, mut scope, mut rope)| {
+        loop_fn(( (vec![] as Vec<Fut<Rope<'static>>>), _scope, _rope), move |(mut joins, mut scope, mut rope)| {
             println!("[expand phase 1] {:?}", id);
             let UnfinishedParse {parens, calls, stack, instr} = Arc::make_mut(&mut scope).part_done.take().unwrap_or_else(|| {
                 UnfinishedParse {
@@ -385,8 +385,8 @@ pub fn expand_with_pool<'f>(
             expander.parens = parens; expander.calls = calls; expander.instr = instr;
             println!("[expand phase 2] {:?}", id);
             parse(stack, scope.clone(), rope, &mut expander);
-            println!("[expand phase 3] {:?}", id);
             joins.extend( expander.joins );
+            println!("[expand phase 3] {:?}", id);
             println!("JOINS {:?}", joins.len());
             if let Some(final_join) = expander.final_join {
                 // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
@@ -423,6 +423,6 @@ pub fn expand_with_pool<'f>(
                 println!("[sending expanded] {:?} {:?}", id, resc);
                 resc
         })
-    ))
+    )
 }
 

@@ -47,13 +47,12 @@ fn it_works() {
     // TODO: organize a real test suite
     let mut chars = read_file(String::new(), "tests/1-simple.pp").unwrap();
     let pool = CpuPool::new_num_cpus();
-    let results = expand_with_pool(pool, Arc::new(default_scope()), chars)
-        .wait()
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .into_string();
-    println!("||\n{}||", results );
+    let pool2 = pool.clone();
+    let results = pool.spawn_fn(move ||{ 
+        expand_with_pool(pool2, Arc::new(default_scope()), chars)
+            .map(|x| { x.as_str().unwrap().into_string() })
+    }).wait().unwrap();
+    println!("||\n{}||", results);
 }
 
 fn main() {
