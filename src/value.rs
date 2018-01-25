@@ -112,7 +112,6 @@ pub enum Value<'s> {
     List(Vec<Value<'s>>),
     Tagged(Tag,Box<Value<'s>>),
     Closure(ValueClosure<'s>),
-    Bubble(ValueClosure<'s>) // <- gets auto-expanded when it reaches its original scope
 }
 use Value::*;
 
@@ -163,7 +162,6 @@ impl<'s,'t> Value<'s> {
             &mut List(ref mut l) => { List(l.into_iter().map(|x| { x.make_static() }).collect()) },
             &mut Tagged(ref t, ref mut v) => { Tagged(*t, Box::new(v.make_static())) },
             &mut Closure(ref mut c) => { Closure(c.force_clone()) },
-            &mut Bubble(ref mut c) => { Bubble(c.force_clone()) },
         }
     }
 /*
@@ -176,7 +174,6 @@ impl<'s,'t> Value<'s> {
             &OwnedList(ref l) => { OwnedList(l.iter().map(|x| { x.dupe() }).collect()) },
             &Tagged(ref t, ref v) => { Tagged(*t, Box::new(v.dupe())) },
             &Closure(ref c) => { Closure(c.force_dupe()) },
-            &Bubble(ref c) => { Bubble(c.force_dupe()) },
         }
     }
 */
@@ -228,29 +225,7 @@ impl<'s> Rope<'s> {
 use std::ptr;
 
 impl<'s> Value<'s> {
-    pub fn bubble(&self, scope: Arc<Scope>) -> Option<&Rope<'s>> {
-            if let &Value::Bubble(ref closure) = self {
-                let &ValueClosure(ref inner_scope, ref contents) = closure;
-                if Arc::ptr_eq(&inner_scope, &scope) {
-                    return Some(&**contents)
-                } else {
-                    panic!("SAD BUBBLING"); // just a test
-                }
-            }
-        return None
-    }
-    pub fn bubble_move(self, scope: Arc<Scope>) -> Option<Rope<'s>> {
-            if let Value::Bubble(closure) = self {
-                let ValueClosure(inner_scope, contents) = closure;
-                if Arc::ptr_eq(&inner_scope, &scope) {
-                    return Some(*contents)
-                } else {
-                    panic!("SAD BUBBLING"); // just a test
-                }
-            }
-        return None
-    }
-    pub fn as_str(self) -> Option<ArcSlice<'s>> {
+   pub fn as_str(self) -> Option<ArcSlice<'s>> {
         match self {
             Str(s) => Some(s),
             _ => None
@@ -323,44 +298,6 @@ impl<'s> Rope<'s> {
         }
         return true
     }
-
-    fn should_be_bubble_concat(&self, scope: Arc<Scope>) -> bool {
-        let mut count = 0;
-        let mut nothing_else = true;
-        let mut result = Rope::new();
-        for leaf in self.data.iter() {
-            match leaf {
-                &Leaf::Chr(ref c) => {
-                    if c.to_str().chars().any(|x| { !x.is_whitespace() }) { nothing_else = false; }
-                },
-                &Own(Bubble(ValueClosure(ref inner_scope, ref contents))) => {
-                    if Arc::ptr_eq(&inner_scope, &scope) {
-                        count += 1;
-                    } 
-                },
-                _ => { nothing_else = false; }
-            }
-        }
-        (!nothing_else && count == 1) || (count > 1)
-    }
-
-    fn to_bubble_rope(mut self) -> Rope<'s> {
-        let mut new_rope = Rope::new();
-        new_rope.data = self.data.into_iter().flat_map(|leaf| {
-            match leaf {
-                Own(Bubble(ValueClosure(inner_scope, contents))) => {
-                    contents.data
-                },
-                leaf => {
-                    let mut l = LinkedList::new();
-                    l.push_back(leaf);
-                    l
-                }
-            }
-        }).collect();
-        new_rope
-    }
-
     fn should_be_string(&self) -> bool {
         let mut count = 0;
         for leaf in self.data.iter() {
@@ -369,11 +306,10 @@ impl<'s> Rope<'s> {
                 &Own(_) => { count += 1 }
             }
         }
-        return (count != 1)
+        count != 1
     }
 
     pub fn to_str(self) -> Option<ArcSlice<'s>> {
-        let mut has = true;
         let mut string : ArcSlice = ArcSlice {
             string: Cow::Owned(Arc::new("".to_owned())),
             range: 0..0
@@ -388,32 +324,7 @@ impl<'s> Rope<'s> {
         }
         Some(string)
     }
-/*
-    pub fn coerce_bubble(mut self, scope: Arc<Scope<'static>>) -> Value<'s> { 
-        if self.should_be_bubble_concat(scope.clone()) {
-            return new_expand(scope.clone(), self.to_bubble_rope());
-        } else if self.should_be_string() {
-            Value::Str( self.to_str().unwrap() )
-        } else {
-            for val in self.data.into_iter() { match val {
-                Chr(_) => { },
-                Own(value) => {
-                    return if let Bubble(closure) = value {
-                        let ValueClosure(inner_scope, contents) = closure;
-                        if Arc::ptr_eq(&inner_scope, &scope) {
-                            new_expand(scope.clone(), *contents )
-                        } else {
-                            Bubble(ValueClosure(inner_scope, contents))
-                        }
-                    } else {
-                        value
-                    }
-                }
-            } }
-            panic!("Failure");
-        }
-    }
-*/
+
     pub fn coerce(self) -> Value<'s> {
        if self.should_be_string() {
            println!("HERE {:?}", self);
@@ -451,7 +362,7 @@ impl<'s> Rope<'s> {
                             prefix.data.push_back(Leaf::Chr(start));
                         }
                         self.data.push_front(Leaf::Chr(slice));
-                        return (Some(prefix));
+                        return Some(prefix)
                     } else {
                         prefix.data.push_back(Leaf::Chr(slice));
                     }

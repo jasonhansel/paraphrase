@@ -1,11 +1,9 @@
 use scope::*;
 use value::*;
-use std::sync::atomic::{AtomicUsize};
 use futures::future::{ok,join_all,loop_fn,Loop};
 use futures::prelude::*;
 use futures_cpupool::*;
 use futures::stream;
-use futures::stream::FuturesOrdered;
 use rand;
 
 
@@ -232,7 +230,6 @@ impl<'s> Expander<'s> {
 }
 
 
-static ACTIVE : AtomicUsize = AtomicUsize::new(0);
 
 
 
