@@ -133,14 +133,14 @@ impl<'s> Expander<'s> {
                 println!(">start call<");
                 let pool = pool.clone();
                 let scope = scope.clone();
-                let ic = inner_cmd.clone();
+                // TODO: is everything really concurrent here?
                 let to_push = stream::futures_ordered(stack.split_off(idx).into_iter())
                     .map(|x| { println!("COERCING {:?}", x); x.coerce() })
                     .collect()
                     .and_then(move |args| {
                         match eval(scope, inner_cmd, args) {
-                            EvalResult::Expand(s, r) => expand_with_pool(pool, s, r),
-                            EvalResult::Done(v) => Box::new(ok(v))
+                            EvalResult::Expand(s, r) => Box::new(pool.clone().spawn(expand_with_pool(pool, s, r))) as Fut<_>,
+                            EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                         }
                     })
                     .map(|v| { println!("GOT {:?} FOR {:?}", v, "LOC");  Rope::from_value(v) });
@@ -182,8 +182,8 @@ impl<'s> Expander<'s> {
             let pool = self.pool.clone();
             let join = Box::new(self.handle_call(cmd,spl).and_then(move |ev| { 
                 match ev {
-                    EvalResult::Expand(s, mut r) => expand_with_pool(pool, s, r.make_static()),
-                    EvalResult::Done(v) => Box::new(ok(v))
+                    EvalResult::Expand(s, r) => Box::new(pool.clone().spawn(expand_with_pool(pool, s, r))) as Fut<_>,
+                    EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
                 }
             }).map(Rope::from_value));
             self.joins.push(join);
@@ -368,7 +368,7 @@ pub fn expand_with_pool<'f>(
     // caller should use coerce*
 
     let id = rand::random::<u64>();
-    let ipool = pool.clone();
+    let ipool = CpuPool::new_num_cpus(); //pool.clone();
     Box::new(
         pool.clone()
         .spawn(loop_fn((vec![], _scope, _rope), move |(mut joins, mut scope, mut rope)| {
@@ -391,7 +391,8 @@ pub fn expand_with_pool<'f>(
             if let Some(final_join) = expander.final_join {
                 // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
                 // situations. Do I need it everywhere?
-                Box::new(final_join.map(|ev| {
+                Box::new(final_join.map(move |ev| {
+                    println!("[expand phase 3.1] {:?} {:?}", id, ev);
                     match ev {
                         EvalResult::Expand(new_scope, new_rope) => Loop::Continue((joins, new_scope, new_rope)),
                         EvalResult::Done(val) => {
@@ -401,16 +402,25 @@ pub fn expand_with_pool<'f>(
                     }
                 }))  as Fut<Loop<_,_>>
             } else {
+                println!("[expand phase 4] {:?}", id);
                 Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
         })
-        .and_then(|joins| { join_all(joins) })
+        .map(move |joins : Vec<Fut<_>>| {
+            let mut v : Vec<Rope<'static>> = vec![];
+            for j in joins {
+                v.push(pool.spawn(j).wait().unwrap());
+                println!("THUS FAR {:?} {:?}", id, v);
+            }
+            v
+        })
+//        .and_then(move |joins| { println!("JOIN {:?}", id); join_all(joins) })
         .map(move |vec| {
-                println!("[expansion completed] {:?}", vec);
+                println!("[expansion completed] {:?} {:?}", id, vec);
                 let mut res = Rope::new();
                 for v in vec.into_iter() { res = res.concat(v); }
                 let resc = res.coerce();
-                println!("[sending expanded] {:?}", id);
+                println!("[sending expanded] {:?} {:?}", id, resc);
                 resc
         })
     ))

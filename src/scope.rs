@@ -114,6 +114,7 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     stat
 }
 
+#[derive(Clone,Debug)]
 pub enum EvalResult<'v> {
     Expand(Arc<Scope<'static>>, Rope<'v>),
     Done(Value<'v>)
