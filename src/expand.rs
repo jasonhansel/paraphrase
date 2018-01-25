@@ -371,15 +371,15 @@ pub fn expand_with_pool<'f>(
             if let Some(final_join) = expander.final_join {
                 // TODO: allow this sort of thing in other cases? may be needed to prevent deadlock-y
                 // situations. Do I need it everywhere?
-                Box::new(ok(
-                    match final_join.wait().unwrap() {
+                Box::new((final_join.map(|w| {
+                    match w {
                         EvalResult::Expand(new_scope, new_rope) => Loop::Continue((joins, new_scope, new_rope)),
                         EvalResult::Done(val) => {
                             joins.push(Box::new(ok(Rope::from_value(val))));
                             Loop::Break(joins)
                         }
                     }
-                ))  as Fut<Loop<_,_>>
+                })))  as Fut<Loop<_,_>>
             } else {
                 Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
