@@ -273,7 +273,6 @@ impl<'s> Rope<'s> {
 
     pub fn coerce(self) -> Value<'s> {
        if self.should_be_string() {
-           println!("HERE {:?}", self);
             Value::Str( self.to_str().unwrap() )
         } else {
             for val in self.data.into_iter() { match val {
