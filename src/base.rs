@@ -35,6 +35,8 @@ fn assert<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
+
+
 fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {

@@ -11,13 +11,13 @@ pub use std::sync::Arc;
 type NativeFn = for<'s> fn(Vec<Value<'static>>) -> EvalResult<'static>;
 
 #[derive(Clone)]
-pub enum Command<'c> {
+enum Command<'c> {
     Native(NativeFn),
     InOther(Arc<Scope<'c>>),
     User(Vec<String>, Rope<'c>)
 }
 
-use Command::*;
+use self::Command::*;
 
 impl<'c> Debug for Command<'c> {
     fn fmt(&self, f: &mut Formatter) -> Result {

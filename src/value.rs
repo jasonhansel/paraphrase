@@ -53,12 +53,14 @@ impl<'s> ArcSlice<'s> {
             .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
         res
     }
+
     fn make_static(&mut self) -> ArcSlice<'static> {
         return ArcSlice {
             string: Cow::Owned(self.string.to_mut().clone()),
             range: self.range.clone()
         }
     }
+
     fn split_first(&mut self) -> Option<char> {
         if self.range.start != self.range.end {
             let ch = self.to_str().chars().next();
@@ -73,8 +75,6 @@ impl<'s> ArcSlice<'s> {
         self.range.len()
     }
 
-
-
     fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
         let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
         (*self).range.start += idx;
@@ -84,7 +84,7 @@ impl<'s> ArcSlice<'s> {
 
 impl<'s> Add for ArcSlice<'s> {
     type Output = ArcSlice<'s>;
-    fn add(mut self, other: ArcSlice<'s>) -> ArcSlice<'s> {
+    fn add(self, other: ArcSlice<'s>) -> ArcSlice<'s> {
         if self.len() == 0 {
             other
         } else if other.len() == 0 {
