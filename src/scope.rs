@@ -85,7 +85,6 @@ impl<'c> Scope<'c> {
 }
 
 
-
 pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope

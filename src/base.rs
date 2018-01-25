@@ -19,6 +19,22 @@ fn get_args<'s>(args: Vec<Value<'static>>) -> (Option<Value>,Option<Value>,Optio
     )
 }
 
+fn assert<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
+    match get_args(args) {
+        (Some(Str(mut message)), Some(val_a), Some(val_b), None, ..) => {
+            // TODO fix threading issue...
+            let mark = if val_a == val_b { "✓ " } else { "✗ " };
+            if val_a != val_b {
+                message = message + ArcSlice::from_string(format!(" - found {:?}", val_b));
+            }
+            Done(Value::Str(
+                ArcSlice::from_string(mark.to_owned()) + message
+            ))
+        },
+        _ => { panic!() }
+    }
+}
+
 fn change_char<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {
@@ -80,9 +96,6 @@ fn literal<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     }
 }
 
-// NOTE: can't define inside of parentheses (intentonally -- I think this is the only sensible
-// opton if we want to allow parallelism -- can this be changed?)
-
 fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(name_args)),
@@ -101,10 +114,8 @@ fn define<'s>(args: Vec<Value<'static>>) -> EvalResult<'static> {
                     parts.push(Ident(part.to_owned()));
                 }
             }
-            // make_mut clones as nec.
             let mut new_scope = dup_scope(&scope);
             Scope::add_user(&mut new_scope, parts, params, *closure_data);
-            // TODO avoid recursion
             Expand(Arc::new(new_scope), *to_expand)
         },
         args => {
@@ -164,5 +175,6 @@ pub fn default_scope<'c>() -> Scope<'c> {
     */
     scope.add_native(vec![ Ident("expand".to_owned()), Param ], expand);
     scope.add_native(vec![ Ident("rescope".to_owned()), Param, Param ], rescope); 
+    scope.add_native(vec![ Ident("assert".to_owned()), Param, Param, Param ], assert); 
     scope
 }

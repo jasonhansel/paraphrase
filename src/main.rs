@@ -14,6 +14,7 @@
 // bigger issue: 'new world order' duplicated
 // NOTE: expanding from the right  === expanding greedily
 
+
 mod value;
 mod scope;
 mod base;
@@ -52,6 +53,8 @@ fn it_works() {
         expand_with_pool(pool2, Arc::new(default_scope()), chars)
             .map(|x| { x.as_str().unwrap().into_string() })
     }).wait().unwrap();
+    assert!(true);
+    assert!(true);
     println!("||\n{}||", results);
 }
 

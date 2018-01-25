@@ -5,6 +5,7 @@ use futures::prelude::*;
 use futures_cpupool::*;
 use futures::stream;
 use rand;
+use std::panic::UnwindSafe;
 
 
 // TODO: clone() less
@@ -45,7 +46,6 @@ pub struct UnfinishedParse {
 }
 
 pub type Fut<T> = Box<Future<Item=T,Error=()> + Send>;
-pub type UFut<T> = Box<Future<Item=T,Error=()>>;
 
 struct Expander<'s> {
     calls: Vec<u16>,
@@ -96,7 +96,7 @@ impl<'s> Expander<'s> {
             Instr::StartCmd => {
             }
             Instr::Push(r) => {
-                stack.push(Box::new(ok(r)));
+                stack.push(Box::new(ok(r)) as Fut<Rope<'static>>);
             },
             Instr::Concat(cnt) => {
                 let idx = stack.len() - cnt as usize;
@@ -109,7 +109,7 @@ impl<'s> Expander<'s> {
                         rope
                     })
                 ;
-                stack.push(Box::new(to_push));
+                stack.push(Box::new(to_push) as Fut<Rope<'static>>);
             },
             Instr::ClosePartial(r, unf) => {
                 let mut new_scope = dup_scope(&scope);
@@ -134,18 +134,18 @@ impl<'s> Expander<'s> {
                     .and_then(move |args| {
                         match eval(scope, inner_cmd, args) {
                             // TODO decrease pointless recursion
-                            EvalResult::Expand(s, r) => Box::new((expand_with_pool(ipool, s, r))) as Fut<_>,
-                            EvalResult::Done(v) => Box::new(ok(v)) as Fut<_>
+                            EvalResult::Expand(s, r) => expand_with_pool(ipool, s, r) as Fut<Value<'static>>,
+                            EvalResult::Done(v) => Box::new(ok(v)) as Fut<Value<'static>>
                         }
                     })
                     .map(|v| { Rope::from_value(v) });
-                stack.push(Box::new(to_push));
+                stack.push(Box::new(to_push) as Fut<Rope<'static>>);
             }
-        } ok((stack, scope)) }).and_then(move |(vec, scope2)| {
-            let r = stream::futures_ordered(vec)
+        } ok((stack as Vec<Fut<Rope<'static>>>, scope)) }).and_then(move |(vec, scope2)| {
+            let r = Box::new(stream::futures_ordered(vec)
                 .map(|x| { x.coerce() })
                 .collect()
-                .map(move |args| { eval(scope2, cmd, args) });
+                .map(move |args| { eval(scope2, cmd, args) }));
  /*               .and_then(move |args| { 
                     match eval(scope2, cmd, args) {
                         EvalResult::Expand(s, mut r) => expand_with_pool(pool2, s, r.make_static()),
@@ -153,7 +153,7 @@ impl<'s> Expander<'s> {
                     }
                 })
                 .map(Rope::from_value); */
-            return r
+            return r as Fut<EvalResult<'static>>
         }))
     }
 

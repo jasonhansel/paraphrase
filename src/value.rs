@@ -6,6 +6,7 @@ use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
+use std::ops::Add;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
@@ -72,7 +73,18 @@ impl<'s> ArcSlice<'s> {
         self.range.len()
     }
 
-    fn concat(mut self, other: ArcSlice<'s>) -> ArcSlice<'s> {
+
+
+    fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
+        let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
+        (*self).range.start += idx;
+        left
+    }
+}
+
+impl<'s> Add for ArcSlice<'s> {
+    type Output = ArcSlice<'s>;
+    fn add(mut self, other: ArcSlice<'s>) -> ArcSlice<'s> {
         if self.len() == 0 {
             other
         } else if other.len() == 0 {
@@ -83,13 +95,8 @@ impl<'s> ArcSlice<'s> {
             ArcSlice::from_string(s)
         }
     }
-
-    fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
-        let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
-        (*self).range.start += idx;
-        left
-    }
 }
+
 
 impl<'s> Clone for ArcSlice<'s> {
     fn clone(&self) -> ArcSlice<'s> {
@@ -263,7 +270,7 @@ impl<'s> Rope<'s> {
         for v in self.data.into_iter().rev() {
             match v.to_str() {
                 // TODO avoid copies
-                Some(x) => { string = string.concat(x); },
+                Some(x) => { string = string + x; },
                 // for some reason, adding the string below doesn't work
                 None => { return None }
             }
