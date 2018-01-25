@@ -78,7 +78,7 @@ impl ArcSlice {
     fn split_at<'t>(&'t mut self, idx: usize) -> ArcSlice {
         println!("SPLITTING B!");
         let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
-        (*self).range.start += idx;
+//        (*self).range.start += idx;
         left
     }
 }
@@ -349,6 +349,7 @@ impl Rope {
     }
 
     pub fn split_char(&mut self) -> Option<char> {
+        println!("SPLIT CH");
         let mut first = true;
         return self.split_at(false, true, &mut |_| {
             if first == true {
