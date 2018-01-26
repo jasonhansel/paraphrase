@@ -89,3 +89,44 @@
 #assert(type removal)
 	(#untag{bool}(#bool(true)))
 	(1)
+
+#define(build_list :str){
+	#define(part_one)(#match_regex(#literal{^([^ ]+)( .*$|$)})(#str)){
+		#if_eq(#part_one)(#list()){
+			#list{
+				#list{}
+				#list{}
+				#list{}
+			}
+		}{
+			#define(colon)(#match_regex(^([^ :]+):(.+))(#head(#tail(#part_one))){
+				#define(listresult)(#build_list(#head(#tail(#tail(#part_one))))){
+				#define(list_params)(#head(#listresult)){
+				#define(list_types)(#head(#tail(#listresult))){
+				#define(pre_colon)(#head(#tail(#colon))){
+				#define(post_colon)(#head(#tail(#colon))){
+				#define(list_names)(#head(#tail(#tail(#listresult)))){
+					#list{
+						#join(#literal(x))(#list_params)
+						#join(#literal(#post_colon))(#list_types)
+						#join(#literal(:#pre_colon))(#list_names)
+					}
+				}}}}}}
+			}
+		}
+	}
+};
+
+#define(def :x :y :rest){
+	#define(listresult)(#build_list(#x)){
+	#define(list_params)(#head(#listresult)){
+	#define(list_types)(#head(#tail(#listresult))){
+	#define(list_names)(#head(#tail(#tail(#listresult)))){
+		#assert(test)(list_params)(1)
+		#assert(test)(list_types)(1)
+		#assert(test)(list_names)(1)
+	}}}}
+};
+
+#def(x y:bool){#y};
+#assert(#x(#bool(1)))(#bool(1))

@@ -61,6 +61,7 @@ fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 
 fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Str(regex)), Some(Str(search_in)), None, ..) => {
+        println!("RE {:?}", regex);
         match Regex::new(regex.to_str()).unwrap().captures(search_in.to_str()) {
             None => { Done(Value::List(vec![])) },
             Some(cap) => {
@@ -159,6 +160,9 @@ fn literal<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
            Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().into_string()  ))) 
         },
+        (Some(Str(str)), None, ..) => {
+            Done (Value::Str(str))
+         },
         _ => { panic!() }
     }
 }

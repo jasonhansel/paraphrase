@@ -192,19 +192,30 @@ impl<'s> Expander<'s> {
     fn start_paren(&mut self) {
         self.parens.push(0);
     }
+ 
     fn end_paren(&mut self) {
+        self.print();
         *( self.calls.last_mut().unwrap() ) += 1;
         let num = self.parens.pop().unwrap();
         if num != 1 {
             self.instr.push(Instr::Concat(num));
         }
     }
+    fn print(&self) {
+        for ref i in self.instr.iter() {
+            println!("- {:?}", i);
+        }
+    }
+
     fn raw_param(&mut self, mut rope: Rope<'s>) {
+        self.print();
+
         *( self.calls.last_mut().unwrap() ) += 1;
         // TODO avoid clones here
         self.instr.push(Instr::Close(rope.make_static()));
     }
     fn semi_param(&mut self, stack: Vec<ParseEntry>, mut rope: Rope<'s>, cmd: Vec<CommandPart>) {
+        self.print();
         let mut call = self.get_call();
         self.calls.pop();
         let unfinished = UnfinishedParse {
@@ -243,6 +254,7 @@ fn parse<'f, 'r, 's : 'r>(
         ParseEntry::Command(mut parts) => {
             // TODO: multi-part commands, variadic macros (may never impl - too error prone)
             // TODO: breaks intermacro text
+            println!("CHECKING {:?} {:?} {:?}", parts, stack, rope);
             if scope.has_command(&parts) {
                 visitor.end_command(parts.split_off(0), scope.clone());
                 // continue to next work item
@@ -254,6 +266,7 @@ fn parse<'f, 'r, 's : 'r>(
                         return true;
                     }
                 });
+                println!("HERE {:?}", rope);
                 let chr = rope.split_char().unwrap();
                 if chr == scope.sigil {
                     let s = rope.split_at(false, true, &mut |chr : char| {
@@ -280,7 +293,7 @@ fn parse<'f, 'r, 's : 'r>(
                     // TODO get this working better
                     if !scope.has_command(&parts) {
 
-                        panic!("Invalid semicolon");
+                        panic!("Invalid semicolon for: {:?}", parts);
                     }
                     let new_scope = scope.clone();
                     return visitor.semi_param(stack, rope, parts);
