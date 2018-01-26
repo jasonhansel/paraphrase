@@ -10,7 +10,7 @@ use std::panic::UnwindSafe;
 
 // TODO: clone() less
 
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,PartialEq,Eq)]
 enum ParseEntry {
     Text(u8, bool), // bool is true if in a call
     Command(Vec<CommandPart>)
@@ -43,6 +43,24 @@ pub struct UnfinishedParse {
     calls: Vec<u16>,
     parens: Vec<u16>,
     instr: Vec<Instr>
+}
+
+impl UnfinishedParse {
+    fn new() -> UnfinishedParse {
+        UnfinishedParse {
+            parens: vec![],
+            calls: vec![],
+            stack: vec![ParseEntry::Text(0, false)],
+            instr: vec![]
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.parens.len() == 0
+            && self.calls.len() == 0
+            && self.instr.len() == 0
+            && self.stack.len() == 1
+            && self.stack[0] == ParseEntry::Text(0, false)
+    }
 }
 
 pub type Fut<T> = Box<Future<Item=T,Error=()> + Send>;

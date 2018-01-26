@@ -5,6 +5,7 @@ use value::Value::*;
 use std::rc::Rc;
 use std::borrow::Cow;
 use scope::EvalResult::*;
+use regex::Regex;
 
 fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,
                                               Option<Value>,Option<Value>,Option<Value>,
@@ -20,6 +21,33 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
         ait.next(),
     )
 }
+// TODO: creating, removing, handling tagged values
+// TODO: list stuff -- concatenate, get values/slices from, build closure
+// TODO: allow defining 'constant' values
+// TODO: manipulating scopes
+
+fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(List(the_list)), None, ..) => {
+        Done(the_list.into_iter().next().unwrap())
+    } _ => {panic!()}}
+}
+
+fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(Str(regex)), Some(Str(search_in)), None, ..) => {
+        match Regex::new(regex.to_str()).unwrap().captures(search_in.to_str()) {
+            None => { Done(Value::List(vec![])) },
+            Some(cap) => {
+                Done(Value::List(
+                    cap.iter().map(|x| {
+                        x.map_or_else(|| Value::Str(ArcSlice::empty()),
+                            |capture| { Value::Str(search_in.index(capture.start()..capture.end()).make_static()) })
+                    }).collect()
+                ))
+            }
+        }
+    } _ => {panic!()}}
+}
+
 
 fn list<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
    if args.len() != 1 { panic!() }
@@ -130,6 +158,26 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
             Scope::add_user(&mut new_scope, parts, params, *closure_data);
             Expand(Arc::new(new_scope), *to_expand)
         },
+        (Some(Str(name_args)),
+        Some(imm_value),
+       Some(Closure(ValueClosure(scope, to_expand))), None, ..) => {
+
+            // TODO: custom arguments, more tests
+            let mut parts = vec![];
+            let mut params = vec![];
+            let na_str = name_args;
+            for part in na_str.to_str().split(' ') {
+                if part.starts_with(':') {
+                    parts.push(Param);
+                    params.push((&part[1..]).to_owned());
+                } else {
+                    parts.push(Ident(part.to_owned()));
+                }
+            }
+            let mut new_scope = dup_scope(&scope);
+            Scope::add_user(&mut new_scope, parts, params, Rope::from_value(imm_value));
+            Expand(Arc::new(new_scope), *to_expand)
+        },
         args => {
             panic!("Invalid state {:?}", args);
         }
@@ -159,35 +207,18 @@ fn rescope<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 //TODO handle EOF propelry
 pub fn default_scope<'c>() -> Scope<'c> {
     let mut scope = Scope::new('#');
-    // idea: source maps?
-    // add 3rd param (;-kind)
-    scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ],
-        define);
-
-    // the below will test 
-    scope.add_native(vec![ Ident("change_char".to_owned()), Param, Param, Param ],
-        change_char
-    );
-    scope.add_native(vec![ Ident("end_paren".to_owned()) ],
-        end_paren
-    );
-    // 
-    scope.add_native(vec![ Ident("literal".to_owned()), Param ],
-        literal
-    );
+    scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ], define);
+    scope.add_native(vec![ Ident("change_char".to_owned()), Param, Param, Param ], change_char);
+    scope.add_native(vec![ Ident("end_paren".to_owned()) ], end_paren );
+    scope.add_native(vec![ Ident("literal".to_owned()), Param ], literal);
     scope.add_native(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ], if_eq);
     scope.add_native(vec![ Ident("if_eq_then".to_owned()), Param, Param, Param, Param, Param ], if_eq_then);
-//    scope.add_native(vec![ Ident("bubble".to_owned()), Param ], bubble);
-
-
-    /*
-    scope.add_native(vec![ Ident("if_eq".to_owned()), Param, Param, Param, Param ],
-        Command::IfEq
-    );
-    */
     scope.add_native(vec![ Ident("expand".to_owned()), Param ], expand);
     scope.add_native(vec![ Ident("rescope".to_owned()), Param, Param ], rescope); 
     scope.add_native(vec![ Ident("assert".to_owned()), Param, Param, Param ], assert); 
     scope.add_native(vec![ Ident("list".to_owned()), Param ], list); 
+    scope.add_native(vec![ Ident("match_regex".to_owned()), Param, Param ], match_regex); 
+    scope.add_native(vec![ Ident("head".to_owned()), Param ], head); 
+
     scope
 }

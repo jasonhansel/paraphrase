@@ -6,7 +6,7 @@ use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
-use std::ops::Add;
+use std::ops::{Add,Index,IndexMut};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(u64);
@@ -42,6 +42,10 @@ impl<'s> ArcSlice<'s> {
         }
     }
 
+    pub fn empty() -> ArcSlice<'static> {
+        return ArcSlice::from_string("".to_owned())
+    }
+
     pub fn to_str(&'s self) -> &'s str {
         return &self.string[self.range.clone()];
     }
@@ -54,12 +58,13 @@ impl<'s> ArcSlice<'s> {
         res
     }
 
-    fn make_static(&mut self) -> ArcSlice<'static> {
+    pub fn make_static(&mut self) -> ArcSlice<'static> {
         return ArcSlice {
             string: Cow::Owned(self.string.to_mut().clone()),
             range: self.range.clone()
         }
     }
+
 
     fn split_first(&mut self) -> Option<char> {
         if self.range.start != self.range.end {
@@ -80,7 +85,15 @@ impl<'s> ArcSlice<'s> {
         (*self).range.start += idx;
         left
     }
+
+    pub fn index(&self, range: Range<usize>) -> ArcSlice<'s> {
+        return ArcSlice {
+            string: self.string.clone(),
+            range: Range { start: self.range.start + range.start, end: self.range.start + range.end }
+        }
+    }
 }
+
 
 impl<'s> Add for ArcSlice<'s> {
     type Output = ArcSlice<'s>;

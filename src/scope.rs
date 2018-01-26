@@ -88,8 +88,10 @@ impl<'c> Scope<'c> {
 pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
-    if scope.part_done.is_some() {
-        panic!("Cannot define in partially-evaluated scopes!");
+    if let Some(ref up) = scope.part_done {
+        if !up.is_empty() {
+            panic!("Cannot define in partially-evaluated scopes!");
+        }
     }
     let mut stat = Scope { sigil: scope.sigil, commands: HashMap::new(), part_done: None };
     for (key, val) in scope.commands.iter() {
@@ -110,10 +112,8 @@ pub enum EvalResult<'v> {
 use EvalResult::*;
 
 pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Rope<'v>>) -> EvalResult<'v> {
-    println!("-> EVAL {:?} {:?}", command, args);
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
-             println!("REFERRING {:?}", args);
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {

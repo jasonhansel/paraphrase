@@ -27,12 +27,18 @@
 
 #define(recur :x){#if_eq(#x)(yikes){#x, hello}{oh #recur(yikes)}};
 
-#assert(recur)(oh yikes, hello)(#recur(here))
-#assert(recur_2)(oh yikes, hello)(#recur(there))
+#assert(recur)
+	(oh yikes, hello)
+	(#recur(here))
+#assert(recur_2)
+	(oh yikes, hello)
+	(#recur(there))
 
 #if_eq_then(#h)(Yolo){ERR1}{#define(w){as a test:}; #define(z){hello world};};
 
-#assert(if_eq_then)(as a test: hello world)(#w #z)
+#assert(if_eq_then)
+	(as a test: hello world)
+	(#w #z)
 
 #define(X){X};
 #define(Y){Y};
@@ -44,3 +50,18 @@
 	#literal{X}
 	#literal{Y}
 ))
+
+#assert(regex)(#list(
+	#literal{hello world}
+	#literal{el}
+	#literal{lo}
+))(#match_regex
+	(h(el)(lo).*)
+	(hello world)
+)
+
+#define(my_list)(#list(#literal{Welcome}));
+
+#assert(extract)
+	(Welcome)
+	(#head(#my_list))
