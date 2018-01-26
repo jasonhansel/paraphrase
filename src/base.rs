@@ -22,15 +22,32 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
     )
 }
 // TODO: creating, removing, handling tagged values
-// TODO: list stuff -- concatenate, get values/slices from, build closure
+// TODO: list stuff -- concatenate, build closure
 // TODO: allow defining 'constant' values
 // TODO: manipulating scopes
+// TODO: 'typeof' operator
+
+fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(List(list_a)), Some(List(list_b)), None, ..) => {
+        let mut  new_list = vec![];
+        new_list.extend(list_a);
+        new_list.extend(list_b);
+        Done(Value::List(new_list))
+    } _ => {panic!()}}
+}
 
 fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(List(the_list)), None, ..) => {
         Done(the_list.into_iter().next().unwrap())
     } _ => {panic!()}}
 }
+
+fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(List(ref the_list)), None, ..) => {
+        Done(Value::List(the_list.clone().split_off(1)))
+    } _ => {panic!()}}
+}
+
 
 fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Str(regex)), Some(Str(search_in)), None, ..) => {
@@ -219,6 +236,8 @@ pub fn default_scope<'c>() -> Scope<'c> {
     scope.add_native(vec![ Ident("list".to_owned()), Param ], list); 
     scope.add_native(vec![ Ident("match_regex".to_owned()), Param, Param ], match_regex); 
     scope.add_native(vec![ Ident("head".to_owned()), Param ], head); 
+    scope.add_native(vec![ Ident("tail".to_owned()), Param ], tail); 
+    scope.add_native(vec![ Ident("join".to_owned()), Param, Param ], join); 
 
     scope
 }

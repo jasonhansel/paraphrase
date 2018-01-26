@@ -146,7 +146,6 @@ impl<'s> Expander<'s> {
                 let items = stack.split_off(idx);
                 let ipool = pool3.clone();
                 let to_push = join_all(items).and_then(move |args| {
-                        println!("HERE {:?}", args);
                         match eval(scope, inner_cmd, args) {
                             // TODO decrease pointless recursion
                             EvalResult::Expand(s, r) => expand_with_pool(ipool, s, r) as Fut<Value<'static>>,

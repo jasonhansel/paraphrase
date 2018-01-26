@@ -62,6 +62,14 @@
 
 #define(my_list)(#list(#literal{Welcome}));
 
-#assert(extract)
+#assert(head)
 	(Welcome)
 	(#head(#my_list))
+
+#assert(tail)
+	(#list( #literal{2} #literal{3} ))
+	(#tail(#list( #literal{1} #literal{2} #literal{3} )))
+
+#assert(join)
+	(#list( #literal{Welcome} #literal{2} #literal{3} ))
+	(#join(#my_list)(#list(#literal{2} #literal{#3})))
