@@ -1,6 +1,7 @@
 
 use value::*;
 use expand::*;
+use serde_json::Value as JValue;
 
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
@@ -10,7 +11,7 @@ use std::sync::atomic::{AtomicUsize,Ordering};
 static latest_tag : AtomicUsize = AtomicUsize::new(0);
 
 pub use std::sync::Arc;
-pub type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
+pub type NativeFn = fn(Vec<Rope>) -> EvalResult;
 
 #[derive(Clone,Debug)]
 pub struct ParamInfo {
@@ -19,16 +20,16 @@ pub struct ParamInfo {
 }
 
 #[derive(Clone)]
-enum Command<'c> {
+enum Command {
     Native(NativeFn),
-    InOther(Arc<Scope<'c>>),
-    User(Vec<ParamInfo>, Tag, Rope<'c>),
+    InOther(Arc<Scope>),
+    User(Vec<ParamInfo>, Tag, Rope),
     Tagger(Tag)
 }
 
 use self::Command::*;
 
-impl<'c> Debug for Command<'c> {
+impl Debug for Command {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             &Native(_) => { write!(f, "[native code]") },
@@ -52,7 +53,7 @@ use ParamKind as P;
 use Value as V;
 
 impl ParamKind {
-    fn match_rope<'s>(&self, rope: Rope<'s>) -> Option<Value<'s>> {
+    fn match_rope(&self, rope: Rope) -> Option<Value> {
         let value = rope.coerce();
         match (self, value) {
             (&P::Any, v) => { Some(v) },
@@ -77,13 +78,13 @@ pub enum CommandPart {
 pub use CommandPart::*;
 
 #[derive(Clone)]
-pub struct Scope<'c> {
+pub struct Scope {
     pub sigil: char,
-    commands: HashMap<Vec<CommandPart>, Command<'c>>,
+    commands: HashMap<Vec<CommandPart>, Command>,
     pub part_done: Option<UnfinishedParse>
 }
 
-impl<'c> Debug for Scope<'c> {
+impl Debug for Scope {
     fn fmt(&self, f: &mut Formatter) -> Result {
         let mut first = true;
         write!(f, "[scope @")?;
@@ -95,8 +96,8 @@ impl<'c> Debug for Scope<'c> {
     }
 }
 
-impl<'c> Scope<'c> {
-    pub fn new(sigil: char) -> Scope<'c> {
+impl Scope {
+    pub fn new(sigil: char) -> Scope {
         Scope {
             sigil: sigil,
             commands: HashMap::new(),
@@ -114,7 +115,7 @@ impl<'c> Scope<'c> {
 
     pub fn add_user(&mut self, parts: Vec<CommandPart>,
                         params: Vec<ParamInfo>,
-                        rope: Rope<'c>) {
+                        rope: Rope) {
         let tag = Tag(latest_tag.fetch_add(1, Ordering::SeqCst));
         self.commands
             .insert(parts, Command::User(params, tag, rope));
@@ -126,6 +127,19 @@ impl<'c> Scope<'c> {
         self.commands.contains_key(parts)
     }
 
+
+    pub fn add_json(&mut self, json: JValue) {
+        match json {
+            JValue::Object(map) => {
+                for (k, v) in map {
+                    self.add_user(vec![ Ident(k) ], vec![],
+                        Rope::from_value( Value::from(v) )
+                    )
+                }
+            },
+            _ => panic!()
+        }
+    }
 
     pub fn get_tag(&self, ident: &str) -> Option<Tag> { 
         let mut parts = vec![ Ident(ident.to_owned()) ];
@@ -142,7 +156,7 @@ impl<'c> Scope<'c> {
 }
 
 
-pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
+pub fn dup_scope(scope : &Arc<Scope>) -> Scope {
     // does this make any sense?
     // TODO improve perf - nb InOther is more important now since it determines cope
     if let Some(ref up) = scope.part_done {
@@ -162,21 +176,21 @@ pub fn dup_scope<'s>(scope : &Arc<Scope<'static>>) -> Scope<'static> {
 }
 
 #[derive(Clone,Debug)]
-pub enum EvalResult<'v> {
-    Expand(Arc<Scope<'static>>, Rope<'v>),
-    Done(Value<'v>)
+pub enum EvalResult {
+    Expand(Arc<Scope>, Rope),
+    Done(Value)
 }
 use EvalResult::*;
 
 
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, mut args: Vec<Rope<'v>>) -> EvalResult<'v> {
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope>, command: Vec<CommandPart>, mut args: Vec<Rope>) -> EvalResult {
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
-             code(args.into_iter().map(|mut x| { x.make_static() }).collect())
+             code(args.into_iter().map(|mut x| { x }).collect())
          }, 
          &Command::Tagger(tag) => {
              let val = args.into_iter().next().unwrap().coerce();
@@ -199,7 +213,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                             &mut new_scope,
                             vec![Ident(name.to_owned())],
                             vec![],
-                            Rope::from_value(value).make_static()
+                            Rope::from_value(value)
                         );
                     },
                     Some(None) => {
@@ -212,7 +226,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                 }
              }
              Scope::add_tag(&mut new_scope, tag);
-             Expand(Arc::new(new_scope), contents.clone().make_static())
+             Expand(Arc::new(new_scope), contents.clone())
          }
      }
 }

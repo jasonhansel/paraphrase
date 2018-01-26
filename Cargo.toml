@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Jason Hansel <jason@jasonhansel.com>"]
 
 [dependencies]
+serde_json = "1.0"
 futures = "0.1"
 futures-cpupool = "0.1"
 rand = "0.4"

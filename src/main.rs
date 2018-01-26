@@ -14,7 +14,8 @@
 // bigger issue: 'new world order' duplicated
 // NOTE: expanding from the right  === expanding greedily
 // TODO: improve perf. of PPM demo; currently concurrency *decreases* perf. (prob because of
-// evaluation-order or communication issues)
+// evaluation-order or communication issues) -- much better with optimization on (~10x)
+// TODO: redirections &c.
 
 
 mod value;
@@ -22,6 +23,7 @@ mod scope;
 mod base;
 mod expand;
 
+extern crate serde_json;
 extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
@@ -44,7 +46,7 @@ use value::*;
 use base::*;
 use expand::*;
 
-fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
+fn read_file(mut string: String, path: &str) -> Result<Rope, Error> {
     std::io::stdout().flush().unwrap();
     let mut file = File::open(path)?;
     file.read_to_string(&mut string)?;
@@ -55,33 +57,27 @@ fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
 #[structopt(name="paraphrase")]
 struct CLIOptions {
     #[structopt(help="Input file")]
-    input: String
-}
-
-#[test]
-fn it_works() {
-    // TODO: organize a real test suite
-    let mut chars = read_file(String::new(), "tests/1-simple.pp").unwrap();
-    let pool = CpuPool::new_num_cpus();
-    let pool2 = pool.clone();
-    let results = pool.spawn_fn(move ||{ 
-        expand_with_pool(pool2, Arc::new(default_scope()), chars)
-            .map(|x| { x.as_str().unwrap().into_string() })
-    }).wait();
-    match results {
-        Ok(result) => { println!("{}", result); },
-        Err(err) => { println!("{:?}", err); assert!(false); }
-    }
+    input: String,
+    #[structopt(short="j", long="json", help="JSON file with definitions")]
+    json_file: Option<String>
 }
 
 fn main() {
-    // TODO add a CLI
+    // use tests/1-simple.pp to assert correctness
     let opts = CLIOptions::from_args();
     let chars = read_file(String::new(), &opts.input[..]).unwrap();
     let pool = CpuPool::new_num_cpus();
     let pool2 = pool.clone();
+
     let results = pool.spawn_fn(move ||{ 
-        expand_with_pool(pool2, Arc::new(default_scope()), chars)
+        let mut scope = default_scope();
+        if let Some(json_path) = opts.json_file {
+            let mut s = String::new();
+            let mut file = File::open(json_path).unwrap();
+            file.read_to_string(&mut s);
+            scope.add_json(serde_json::from_str(&s[..]).unwrap());
+        }
+        expand_with_pool(pool2, Arc::new(scope), chars)
             .map(|x| { Rope::from_value(x).to_str().unwrap().into_string() })
     }).wait();
     match results {

@@ -6,7 +6,12 @@ use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
+use std::marker::PhantomData;
 use std::ops::{Add,Index,IndexMut};
+use std::time::{Duration,Instant};
+use std::borrow::Borrow;
+
+use serde_json::Value as JValue;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(pub usize);
@@ -14,19 +19,19 @@ pub struct Tag(pub usize);
 
 // should closures "know" about their parameters?
 #[derive(Clone)]
-pub struct ValueClosure<'s>(pub Arc<Scope<'static>>, pub Box<Rope<'s>>);
+pub struct ValueClosure(pub Arc<Scope>, pub Box<Rope>);
 
-impl<'s> ValueClosure<'s> {
-    fn from(scope: Arc<Scope<'static>>, rope: Rope<'s>) -> ValueClosure<'s> {
+impl ValueClosure {
+    fn from(scope: Arc<Scope>, rope: Rope) -> ValueClosure {
         ValueClosure(scope, Box::new(rope))
     }
 }
 
-pub struct ArcSlice<'s> {
-    string: Cow<'s, Arc<String>>,
+pub struct ArcSlice {
+    string: Arc<String>,
     range: Range<usize>
 }
-impl<'s> fmt::Debug for ArcSlice<'s> {
+impl fmt::Debug for ArcSlice {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.to_str().fmt(f)
     }
@@ -34,19 +39,19 @@ impl<'s> fmt::Debug for ArcSlice<'s> {
 
 
 
-impl<'s> ArcSlice<'s> {
-    pub fn from_string(s: String) -> ArcSlice<'static> {
+impl ArcSlice {
+    pub fn from_string(s: String) -> ArcSlice {
         return ArcSlice {
             range: (0..(s.len())),
-            string: Cow::Owned(Arc::new(s))
+            string: Arc::new(s)
         }
     }
 
-    pub fn empty() -> ArcSlice<'static> {
+    pub fn empty() -> ArcSlice {
         return ArcSlice::from_string("".to_owned())
     }
 
-    pub fn to_str(&'s self) -> &'s str {
+    pub fn to_str(& self) -> & str {
         return &self.string[self.range.clone()];
     }
     
@@ -55,20 +60,11 @@ impl<'s> ArcSlice<'s> {
         return self.to_str().to_owned();
 
         let range = self.range.clone();
-        let res = Arc::try_unwrap(self.string.into_owned())
+        let res = Arc::try_unwrap(self.string)
             .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
             .unwrap_or_else(|x| { (&x[range.clone()]).to_owned()  });
         res
     }
-
-    pub fn make_static(&mut self) -> ArcSlice<'static> {
-		let &mut ArcSlice{ref mut string, ref mut range} = self;
-        ArcSlice {
-            string: Cow::Owned( (**string).clone() ),
-            range: range.clone()
-        }
-    }
-
 
     fn split_first(&mut self) -> Option<char> {
         if self.range.start != self.range.end {
@@ -84,7 +80,7 @@ impl<'s> ArcSlice<'s> {
         self.range.len()
     }
 
-    fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
+    fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice) {
         let mut left = ArcSlice::from_string(self.to_str().to_owned());
         left.range = Range{ start: 0, end: idx};
             // ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
@@ -92,7 +88,7 @@ impl<'s> ArcSlice<'s> {
         left
     }
 
-    pub fn index(&self, range: Range<usize>) -> ArcSlice<'s> {
+    pub fn index(&self, range: Range<usize>) -> ArcSlice {
         return ArcSlice {
             string: self.string.clone(),
             range: Range { start: self.range.start + range.start, end: self.range.start + range.end }
@@ -101,9 +97,9 @@ impl<'s> ArcSlice<'s> {
 }
 
 
-impl<'s> Add for ArcSlice<'s> {
-    type Output = ArcSlice<'s>;
-    fn add(self, other: ArcSlice<'s>) -> ArcSlice<'s> {
+impl Add for ArcSlice {
+    type Output = ArcSlice;
+    fn add(self, other: ArcSlice) -> ArcSlice {
         if self.len() == 0 {
             other
         } else if other.len() == 0 {
@@ -117,12 +113,14 @@ impl<'s> Add for ArcSlice<'s> {
 }
 
 
-impl<'s> Clone for ArcSlice<'s> {
-    fn clone(&self) -> ArcSlice<'s> {
-        return ArcSlice {
-            string: Cow::Owned(self.string.clone().into_owned()),
-            range: self.range.clone()
-        }
+impl Clone for ArcSlice {
+    fn clone(&self) -> ArcSlice {
+		// Generally Arc is faster than cloning the string
+		let b = ArcSlice {
+			string: self.string.clone(),
+			range: self.range.clone()
+		};
+		b
     }
 }
 
@@ -131,16 +129,16 @@ impl<'s> Clone for ArcSlice<'s> {
 // A Value is something that can be used as a parameter to a macro,
 // or as a return value.
 #[derive(Clone,Debug)]
-pub enum Value<'s> {
-    Str(ArcSlice<'s>),
-    List(Vec<Value<'s>>),
-    Tagged(Tag,Box<Value<'s>>),
-    Closure(ValueClosure<'s>),
+pub enum Value {
+    Str(ArcSlice),
+    List(Vec<Value>),
+    Tagged(Tag,Box<Value>),
+    Closure(ValueClosure),
 }
 use Value::*;
 
-impl<'s> PartialEq for Value<'s> {
-    fn eq(&self, other: &Value<'s>) -> bool {
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
         match (self, other) {
             (&Str(ref a), &Str(ref b)) => { a.to_str() == b.to_str() },
             (&List(ref a), &List(ref b)) => { a == b }
@@ -152,6 +150,15 @@ impl<'s> PartialEq for Value<'s> {
     }
 }
 
+impl From<JValue> for Value {
+	fn from(val: JValue) -> Value {
+		match val {
+			JValue::String(s) => { Value::Str(ArcSlice::from_string(s)) },
+			JValue::Array(a) => { Value::List(a.into_iter().map(Value::from).collect()) },
+			_ => { panic!("Only strings are supported in JSON"); }
+		}
+	}
+}
 
 
 /* UNBALANCED, BORROWED rope data structure
@@ -159,61 +166,27 @@ impl<'s> PartialEq for Value<'s> {
  * (Not quite a rope at the moment) */
 
 #[derive(Clone,Debug)]
-enum Leaf<'s> {
-    Own(Value<'s>),
-    Chr(ArcSlice<'s>) // from/to
+enum Leaf {
+    Own(Value),
+    Chr(ArcSlice) // from/to
 }
 
 use self::Leaf::*;
 
 #[derive(Clone,Debug)]
-pub struct Rope<'s> {
-    data: LinkedList<Leaf<'s>>
+pub struct Rope {
+    data: Vec<Leaf>
 }
 
-impl<'s> ValueClosure<'s> {
-    pub fn force_clone(&mut self) -> ValueClosure<'static> {
+impl ValueClosure {
+    pub fn force_clone(&mut self) -> ValueClosure {
         match self {
-           &mut ValueClosure(ref sc, ref mut ro) => { ValueClosure(sc.clone(), Box::new(ro.make_static() )) },
+           &mut ValueClosure(ref sc, ref mut ro) => { ValueClosure(sc.clone(), ro.clone() ) },
         }
     }
 }
-
-impl<'s,'t> Value<'s> {
-    pub fn make_static(&mut self) -> Value<'static> {
-        match self {
-            // FIXME: avoid using this (or clone)
-            &mut Str(ref mut s) => { Str(s.make_static()) },
-            &mut List(ref mut l) => { List(l.into_iter().map(|x| { x.make_static() }).collect()) },
-            &mut Tagged(ref t, ref mut v) => { Tagged(*t, Box::new(v.make_static())) },
-            &mut Closure(ref mut c) => { Closure(c.force_clone()) },
-        }
-    }
-}
-
-impl<'s> Leaf<'s> {
-fn make_static(&mut self) -> Leaf<'static> { match self {
-    // TODO avoid this at all costs
-    &mut Leaf::Chr(ref mut c) => {
-        Leaf::Chr(c.make_static())
-    },
-    &mut Leaf::Own(ref mut v) => { Leaf::Own( v.make_static() )  }
-} }
-
-}
-
-impl<'s> Rope<'s> {
-    pub fn make_static(&mut self) -> Rope<'static> {
-        let mut new_rope = Rope::new();
-        for item in self.data.iter_mut() {
-            new_rope.data.push_back( item.make_static() );
-        }
-        new_rope
-    }
-}
-
-impl<'s> Value<'s> {
-   pub fn as_str(self) -> Option<ArcSlice<'s>> {
+impl Value {
+   pub fn as_str(self) -> Option<ArcSlice> {
         match self {
             Str(s) => Some(s),
             _ => None
@@ -221,8 +194,8 @@ impl<'s> Value<'s> {
     }
 }
 
-impl<'s> Leaf<'s> {
-    pub fn to_str(self) -> Option<ArcSlice<'s>> {
+impl Leaf {
+    pub fn to_str(self) -> Option<ArcSlice> {
         match self {
             Leaf::Chr(c) => { Some(c) },
             Leaf::Own(Value::Str(v)) => { Some(v) },
@@ -233,29 +206,30 @@ impl<'s> Leaf<'s> {
 
 
 
-impl<'s> Rope<'s> {
-    pub fn new() -> Rope<'s> {
+impl Rope {
+    pub fn new() -> Rope {
         return Rope {
-            data: LinkedList::new()
+            data: Vec::new()
         }
     }
 
-    pub fn from_value(value: Value<'s>) -> Rope<'s> {
+    pub fn from_value(value: Value) -> Rope {
         Rope {
             data: iter::once(Leaf::Own(value)).collect()
         }
     }
-    pub fn from_slice(value: ArcSlice<'s>) -> Rope<'s> {
+    pub fn from_slice(value: ArcSlice) -> Rope {
         Rope {
             data: iter::once(Leaf::Chr(value)).collect()
         }
     }
 
 
-    pub fn concat(mut self, mut other: Rope<'s>) -> Rope<'s> {
+    pub fn concat(mut self, mut other: Rope) -> Rope {
+		// TODO: merge strings
         return Rope {
             data: {
-                let mut l = LinkedList::new();
+                let mut l = Vec::new();
                 l.append(&mut other.data);
                 l.append(&mut self.data);
                 l
@@ -283,12 +257,9 @@ impl<'s> Rope<'s> {
         count != 1
     }
 
-    pub fn to_str(self) -> Option<ArcSlice<'s>> {
-        let mut string : ArcSlice = ArcSlice {
-            string: Cow::Owned(Arc::new("".to_owned())),
-            range: 0..0
-        };
-        for v in self.data.into_iter().rev() {
+    pub fn to_str(self) -> Option<ArcSlice> {
+        let mut string : ArcSlice = ArcSlice::from_string("".to_owned());
+		for v in self.data.into_iter().rev() {
             match v.to_str() {
                 // TODO avoid copies
                 Some(x) => { string = string + x; },
@@ -299,7 +270,7 @@ impl<'s> Rope<'s> {
         Some(string)
     }
 
-    pub fn coerce_list(self) -> Value<'s> {
+    pub fn coerce_list(self) -> Value {
         let mut vec = vec![];
         for val in self.data.into_iter().rev() { match val {
             Chr(c) => {
@@ -310,7 +281,7 @@ impl<'s> Rope<'s> {
         Value::List(vec)
     }
 
-    pub fn coerce(self) -> Value<'s> {
+    pub fn coerce(self) -> Value {
        if self.should_be_string() {
             Value::Str( self.to_str().unwrap() )
         } else {
@@ -323,17 +294,17 @@ impl<'s> Rope<'s> {
     }
         // may want to make this stuff iterative
     pub fn split_at<'r,F : FnMut(char) -> bool>(&'r mut self, match_val : bool, match_eof: bool, matcher: &mut F)
-        ->  Option<Rope<'s>>  {
+        ->  Option<Rope>  {
         // TODO can optimize the below. would vecs be faster than linked lists?
-        let mut prefix = Rope { data: LinkedList::new() };
+        let mut prefix = Rope { data: Vec::new() };
         while !self.data.is_empty() {
-            let front = self.data.pop_back().unwrap();
+            let front = self.data.pop().unwrap();
             match front {
                 Leaf::Own(_) => {
                     if match_val {
-                        prefix.data.push_front(front);
+                        prefix.data.insert(0,front);
                     } else {
-                        self.data.push_back(front);
+                        self.data.push(front);
                         return Some(prefix);
                     }
                 },
@@ -341,12 +312,12 @@ impl<'s> Rope<'s> {
                     if let Some(idx) = slice.to_str().find(|x| { matcher(x) }) {
                         if idx > 0 {
                             let start = slice.split_at(idx);
-                            prefix.data.push_front(Leaf::Chr(start));
+                            prefix.data.insert(0,Leaf::Chr(start));
                         }
-                        self.data.push_back(Leaf::Chr(slice));
+                        self.data.push(Leaf::Chr(slice));
                         return Some(prefix)
                     } else {
-                        prefix.data.push_front(Leaf::Chr(slice));
+                        prefix.data.push(Leaf::Chr(slice));
                     }
                 }
             };
@@ -360,7 +331,7 @@ impl<'s> Rope<'s> {
     }
 
     pub fn get_char(&self) -> Option<char> {
-        match self.data.back()? {
+        match self.data.last()? {
             &Leaf::Own(_) => { None },
             &Leaf::Chr(ref ch) => {
                 ch.to_str().chars().next()
@@ -382,7 +353,7 @@ impl<'s> Rope<'s> {
 
 }
 
-impl<'s> fmt::Debug for ValueClosure<'s> {
+impl fmt::Debug for ValueClosure {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &ValueClosure(ref scope, ref x) = self;
         scope.fmt(f)?;

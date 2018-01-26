@@ -4,7 +4,7 @@ use value::Value::*;
 use scope::EvalResult::*;
 use regex::Regex;
 
-fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Option<Value>,
+fn get_args<'s>(mut args: Vec<Rope>) -> (Option<Value>,Option<Value>,Option<Value>,
                                               Option<Value>,Option<Value>,Option<Value>,
                                               Option<Value>) {
     let mut ait = args.drain(0..).map(|x| { x.coerce() });
@@ -26,13 +26,13 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
 // TODO: 'typeof' operator
 // TODO: file position, stack traces, etc.
 
-fn var_dump(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn var_dump(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(val), None, ..) => {
         Done(Value::Str(ArcSlice::from_string(format!("{:?}", val))))
     } _ => {panic!()}}
 }
 
-fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn untag(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(Closure(ValueClosure(scope, tag_name))),
         Some(Tagged(tag_id, tagged)), None, ..) => {
         // TODO: allow multiple parameters here
@@ -42,7 +42,7 @@ fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     } _ => {panic!()}}
 }
 
-fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn join(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(List(list_a)), Some(List(list_b)), None, ..) => {
         let mut  new_list = vec![];
         new_list.extend(list_a);
@@ -51,20 +51,20 @@ fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     } _ => {panic!()}}
 }
 
-fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn head(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(List(the_list)), None, ..) => {
         Done(the_list.into_iter().next().unwrap())
     } _ => {panic!()}}
 }
 
-fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn tail(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(List(ref the_list)), None, ..) => {
         Done(Value::List(the_list.clone().split_off(1)))
     } _ => {panic!()}}
 }
 
 
-fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn match_regex(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(Str(regex)), Some(Str(search_in)), None, ..) => {
         match Regex::new(regex.to_str()).unwrap().captures(search_in.to_str()) {
             None => { Done(Value::List(vec![])) },
@@ -72,7 +72,7 @@ fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
                 Done(Value::List(
                     cap.iter().map(|x| {
                         x.map_or_else(|| Value::Str(ArcSlice::empty()),
-                            |capture| { Value::Str(search_in.index(capture.start()..capture.end()).make_static()) })
+                            |capture| { Value::Str(search_in.index(capture.start()..capture.end())) })
                     }).collect()
                 ))
             }
@@ -81,12 +81,12 @@ fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 }
 
 
-fn list<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn list<'s>(args: Vec<Rope>) -> EvalResult {
    if args.len() != 1 { panic!() }
     Done(args.into_iter().next().unwrap().coerce_list())
 }
 
-fn assert<'s>(mut args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn assert<'s>(mut args: Vec<Rope>) -> EvalResult {
     let t1 = Some(args.remove(0).coerce());
     let t2 = Some(args.remove(0).coerce());
     let t3 = Some(args.remove(0).coerce());
@@ -107,11 +107,11 @@ fn assert<'s>(mut args: Vec<Rope<'static>>) -> EvalResult<'static> {
 
 
 
-fn change_char<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn change_char<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (Some(Str(n)), Some(Str(replacement)), Some(Closure(ValueClosure(inner_scope, mut h))), None, ..) => {
             let needle = n.to_str().chars().next().unwrap();
-            let mut rest = h.make_static();
+            let mut rest = h;
             let prefix = rest.split_at(true, false, &mut |ch| {
                 ch == needle
             });
@@ -119,14 +119,14 @@ fn change_char<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
             Expand(inner_scope,
                  prefix.unwrap().concat(
                         Rope::from_slice(replacement)
-                ).concat(rest) 
+                ).concat(*rest) 
             )
         },
         _ => { panic!() }
     }
 }
 
-fn if_eq<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn if_eq<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
             let mut todo = if value_a == value_b { if_true } else { if_false };
@@ -139,7 +139,7 @@ fn if_eq<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 
 // FIXME: not working yet??
 
-fn if_eq_then<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> { 
+fn if_eq_then<'s>(args: Vec<Rope>) -> EvalResult { 
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
             let mut todo = (if value_a == value_b { if_true } else { if_false }).force_clone().1;
@@ -150,7 +150,7 @@ fn if_eq_then<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 }
 
 
-fn end_paren<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn end_paren<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (None, ..) => {
             Done(Value::Str(ArcSlice::from_string(")".to_owned())))
@@ -159,7 +159,7 @@ fn end_paren<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn literal<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn literal<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (Some(Closure(ValueClosure(_, closure))), None, ..) => {
            Done (Value::Str( ArcSlice::from_string( closure.to_str().unwrap().into_string()  ))) 
@@ -185,7 +185,7 @@ fn parse_param_type(pt: &str, scope: &Arc<Scope>) -> ParamKind {
     }
 }
 
-fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn define<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
@@ -246,7 +246,7 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn expand<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn expand<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
         (Some(Closure(ValueClosure(scope, contents))), None, ..) => {
             Expand(scope, *contents)
@@ -255,7 +255,7 @@ fn expand<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     }
 }
 
-fn rescope<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+fn rescope<'s>(args: Vec<Rope>) -> EvalResult {
     match get_args(args) {
     (Some(Closure(ValueClosure(inner_scope, _))),
     Some(Closure(ValueClosure(_, contents))),None,..) => {
@@ -265,8 +265,8 @@ fn rescope<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     }
 }
 
-//TODO handle EOF propelry
-pub fn default_scope<'c>() -> Scope<'c> {
+    //TODO handle EOF propelry
+pub fn default_scope() -> Scope {
     let mut scope = Scope::new('#');
     scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ], define);
     scope.add_native(vec![ Ident("change_char".to_owned()), Param, Param, Param ], change_char);

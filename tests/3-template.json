@@ -1,0 +1,5 @@
+{
+	"hello": "Hello",
+	"world": "world!",
+	"data": ["Ignore # signs", "Ignore (parens)", "Ignore {brackets}"]
+}
