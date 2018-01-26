@@ -1,9 +1,6 @@
 use scope::*;
 use value::*;
-use expand::*;
 use value::Value::*;
-use std::rc::Rc;
-use std::borrow::Cow;
 use scope::EvalResult::*;
 use regex::Regex;
 
@@ -30,8 +27,7 @@ fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Closure(ValueClosure(scope, tag_name))),
         Some(Tagged(tag_id, tagged)), None, ..) => {
         // TODO: allow multiple parameters here
-        let cmd_vec = vec![Ident( tag_name.to_str().unwrap().into_string() )];
-        let correct_id = scope.get_tag(cmd_vec).unwrap();
+        let correct_id = scope.get_tag(tag_name.to_str().unwrap().to_str()).unwrap();
         if correct_id != tag_id { panic!() }
         Done(*tagged)
     } _ => {panic!()}}
@@ -168,6 +164,20 @@ fn literal<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     }
 }
 
+fn parse_param_type(pt: &str, scope: &Arc<Scope>) -> ParamKind {
+    match pt {
+        "any" => ParamKind::Any,
+        "?" => ParamKind::Any,
+        "closure" => ParamKind::Closure,
+        "list" => ParamKind::List,
+        "string" => ParamKind::Str,
+        "str" => ParamKind::Str,
+        tag => {
+            ParamKind::Tag(scope.get_tag(tag).unwrap())
+        }
+    }
+}
+
 fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(name_args)),
@@ -178,10 +188,16 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
             let mut parts = vec![];
             let mut params = vec![];
             let na_str = name_args;
+            // TODO actually *ensure* arguments rae of the correct types
             for part in na_str.to_str().split(' ') {
-                if part.starts_with(':') {
+                let name_tag : Vec<&str> = part.split(':').collect();
+                let name = name_tag[0];
+                if let Some(tag) = (name_tag.get(1)) {
                     parts.push(Param);
-                    params.push((&part[1..]).to_owned());
+                    params.push(ParamInfo {
+                        name: name.to_owned(),
+                        kind: parse_param_type(tag, &scope)
+                    });
                 } else {
                     parts.push(Ident(part.to_owned()));
                 }
@@ -210,12 +226,7 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
             let mut params = vec![];
             let na_str = name_args;
             for part in na_str.to_str().split(' ') {
-                if part.starts_with(':') {
-                    parts.push(Param);
-                    params.push((&part[1..]).to_owned());
-                } else {
-                    parts.push(Ident(part.to_owned()));
-                }
+                parts.push(Ident(part.to_owned()));
             }
             let mut new_scope = dup_scope(&scope);
             Scope::add_user(&mut new_scope, parts, params, Rope::from_value(imm_value));

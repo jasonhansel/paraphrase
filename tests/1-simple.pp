@@ -5,11 +5,11 @@
 #define(x){#h #w};
 #assert(indir)(Hello world)(#x)
 
-#define(z :y){#y world};
-#define(abc :y){#y world};
+#define(z y:str){#y world};
+#define(abc y:str){#y world};
 #assert(param)(Hello world)(#z(Hello))
 
-#define(q :y){#h: #expand(#rescope(#y){#w} ) #w };
+#define(q y:closure){#h: #expand(#rescope(#y){#w} ) #w };
 #define(w){new world order};
 #assert(scope)(Hello: new world order world )(#q{XYZ})
 
@@ -25,7 +25,7 @@
 #change_char(@)(#literal{)}); #literal{:@}
 )
 
-#define(recur :x){#if_eq(#x)(yikes){#x, hello}{oh #recur(yikes)}};
+#define(recur x:str){#if_eq(#x)(yikes){#x, hello}{oh #recur(yikes)}};
 
 #assert(recur)
 	(oh yikes, hello)
@@ -74,13 +74,22 @@
 	(#list( #literal{Welcome} #literal{2} #literal{3} ))
 	(#join(#my_list)(#list(#literal{2} #literal{3})))
 
-#define(bool :str){
+#define(bool str:string){
 	#if_eq(#str)(true){
 		#tag(1)
 	}{
 		#tag(0)
 	}
 };
+
+#define(str_of_bool b:bool){
+	#if_eq(#b)(#bool(true)) {yes}{no}
+};
+
+#define(str_of_list l:list){
+	#if_eq(#l)(#list()){}
+		{#head(l) #str_of_list(#tail(l))}
+}
 
 #assert(type)
 	(#bool(true))
@@ -90,5 +99,10 @@
 	(#untag{bool}(#bool(true)))
 	(1)
 
+#assert(str_of_bool)
+	(yes no)
+	(#str_of_bool(#bool(true)) #str_of_bool(#bool(false)))
 
-
+#assert(str_of_list)
+	(a b c)
+	(#str_of_list(#literal{a} #literal{b} #literal{c}))

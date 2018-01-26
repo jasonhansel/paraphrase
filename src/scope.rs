@@ -12,11 +12,17 @@ static latest_tag : AtomicUsize = AtomicUsize::new(0);
 pub use std::sync::Arc;
 pub type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
 
+#[derive(Clone,Debug)]
+pub struct ParamInfo {
+    pub kind: ParamKind,
+    pub name: String
+}
+
 #[derive(Clone)]
 enum Command<'c> {
     Native(NativeFn),
     InOther(Arc<Scope<'c>>),
-    User(Vec<String>, Tag, Rope<'c>),
+    User(Vec<ParamInfo>, Tag, Rope<'c>),
     Tagger(Tag)
 }
 
@@ -32,6 +38,36 @@ impl<'c> Debug for Command<'c> {
         }
     }
 }
+
+#[derive(Copy,Clone,Debug)]
+pub enum ParamKind {
+    Any,
+    Closure,
+    List,
+    Str,
+    Tag(Tag)
+}
+
+use ParamKind as P;
+use Value as V;
+
+impl ParamKind {
+    fn match_rope<'s>(&self, rope: Rope<'s>) -> Option<Value<'s>> {
+        let value = rope.coerce();
+        match (self, value) {
+            (&P::Any, v) => { Some(v) },
+            (&P::Closure, V::Closure(v)) => { Some(V::Closure(v)) }
+            (&P::List, V::List(v)) => { Some(V::List(v)) }
+            (&P::Str, V::Str(v)) => { Some(V::Str(v)) }
+            (&P::Tag(tag_a), V::Tagged(tag_b, ival)) => { 
+                if tag_a == tag_b { Some(V::Tagged(tag_b, ival)) }
+                else { None }
+            },
+            _ => { None }
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum CommandPart {
@@ -77,7 +113,7 @@ impl<'c> Scope<'c> {
     }
 
     pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
-                        params: Vec<String>,
+                        params: Vec<ParamInfo>,
                         rope: Rope<'c>) {
         let id = latest_tag.fetch_add(1, Ordering::SeqCst);
         let tag = Tag(latest_tag.fetch_add(1, Ordering::SeqCst));
@@ -91,7 +127,9 @@ impl<'c> Scope<'c> {
         self.commands.contains_key(parts)
     }
 
-    pub fn get_tag(&self, mut parts: Vec<CommandPart>) -> Option<Tag> { 
+
+    pub fn get_tag(&self, ident: &str) -> Option<Tag> { 
+        let mut parts = vec![ Ident(ident.to_owned()) ];
         while !self.has_command(&parts[..]) {
             parts.push(Param);
         }
@@ -130,6 +168,7 @@ pub enum EvalResult<'v> {
 use EvalResult::*;
 
 
+
 pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, mut args: Vec<Rope<'v>>) -> EvalResult<'v> {
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
@@ -149,7 +188,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
              if arg_names.len() != args.len() {
                  panic!("Wrong number of arguments supplied to evaluator {:?} {:?}", command, args);
              }
-             for (name, arg) in arg_names.into_iter().zip( args.into_iter() ) {
+             for &ParamInfo{ref kind,ref name} in arg_names.into_iter().rev() {
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
@@ -157,7 +196,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                     &mut new_scope,
                     vec![Ident(name.to_owned())],
                     vec![],
-                    Rope::from_value(arg.coerce()).make_static()
+                    Rope::from_value(kind.match_rope(args.pop().unwrap()).unwrap()).make_static()
                 );
              }
              Scope::add_tag(&mut new_scope, tag);
