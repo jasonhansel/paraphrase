@@ -72,4 +72,4 @@
 
 #assert(join)
 	(#list( #literal{Welcome} #literal{2} #literal{3} ))
-	(#join(#my_list)(#list(#literal{2} #literal{#3})))
+	(#join(#my_list)(#list(#literal{2} #literal{3})))
