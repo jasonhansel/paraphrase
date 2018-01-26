@@ -131,7 +131,6 @@ impl<'c> Scope<'c> {
         let mut parts = vec![ Ident(ident.to_owned()) ];
         // TODO: make this less inefficient
         while !self.has_command(&parts[..]) && parts.len() < 20 {
-            println!("CHECKING {:?}", parts);
             parts.push(Param);
         }
         match self.commands.get(&parts[..]) {
@@ -194,8 +193,8 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                match kind.match_rope(args.pop().unwrap()) {
-                    Some(value) => {
+                match args.pop().map(|x| { kind.match_rope(x) }) {
+                    Some(Some(value)) => {
                         Scope::add_user(
                             &mut new_scope,
                             vec![Ident(name.to_owned())],
@@ -203,8 +202,12 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                             Rope::from_value(value).make_static()
                         );
                     },
+                    Some(None) => {
+                        println!("Error: expected {:?} in {:?}", kind, command);
+                        panic!("Error: expected {:?} in {:?}", kind, command);
+                    }
                     None => {
-                        panic!("Error: expected {:?}", kind);
+                        panic!("Error: expected {:?} in {:?}, but no argument was provided", kind, command);
                     }
                 }
              }

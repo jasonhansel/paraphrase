@@ -24,11 +24,18 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
 // TODO: allow defining 'constant' values
 // TODO: manipulating scopes
 // TODO: 'typeof' operator
+// TODO: file position, stack traces, etc.
+
+fn var_dump(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(val), None, ..) => {
+        Done(Value::Str(ArcSlice::from_string(format!("{:?}", val))))
+    } _ => {panic!()}}
+}
+
 fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Closure(ValueClosure(scope, tag_name))),
         Some(Tagged(tag_id, tagged)), None, ..) => {
         // TODO: allow multiple parameters here
-        println!("TEST {:?}", scope);
         let correct_id = scope.get_tag(tag_name.to_str().unwrap().to_str()).unwrap();
         if correct_id != tag_id { panic!() }
         Done(*tagged)
@@ -45,14 +52,12 @@ fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 }
 
 fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
-    println!("ARGS {:?}", args);
     match get_args(args) { (Some(List(the_list)), None, ..) => {
         Done(the_list.into_iter().next().unwrap())
     } _ => {panic!()}}
 }
 
 fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
-    println!("ARGS {:?}", args);
     match get_args(args) { (Some(List(ref the_list)), None, ..) => {
         Done(Value::List(the_list.clone().split_off(1)))
     } _ => {panic!()}}
@@ -61,7 +66,6 @@ fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 
 fn match_regex(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Str(regex)), Some(Str(search_in)), None, ..) => {
-        println!("RE {:?}", regex);
         match Regex::new(regex.to_str()).unwrap().captures(search_in.to_str()) {
             None => { Done(Value::List(vec![])) },
             Some(cap) => {
@@ -125,7 +129,6 @@ fn change_char<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 fn if_eq<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
-            println!("TESTING {:?} {:?}", value_a, value_b);
             let mut todo = if value_a == value_b { if_true } else { if_false };
             Expand(todo.0, *(todo.1))
         },
@@ -278,6 +281,7 @@ pub fn default_scope<'c>() -> Scope<'c> {
     scope.add_native(vec![ Ident("match_regex".to_owned()), Param, Param ], match_regex); 
     scope.add_native(vec![ Ident("head".to_owned()), Param ], head); 
     scope.add_native(vec![ Ident("tail".to_owned()), Param ], tail); 
+    scope.add_native(vec![ Ident("var_dump".to_owned()), Param ], var_dump); 
     scope.add_native(vec![ Ident("join".to_owned()), Param, Param ], join); 
     scope.add_native(vec![ Ident("untag".to_owned()), Param, Param ], untag); 
 

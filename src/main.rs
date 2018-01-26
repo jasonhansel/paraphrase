@@ -13,6 +13,8 @@
 // TODO fix bugs in test - is newline behavior desirable?
 // bigger issue: 'new world order' duplicated
 // NOTE: expanding from the right  === expanding greedily
+// TODO: improve perf. of PPM demo; currently concurrency *decreases* perf. (prob because of
+// evaluation-order or communication issues)
 
 
 mod value;
@@ -75,12 +77,12 @@ fn it_works() {
 fn main() {
     // TODO add a CLI
     let opts = CLIOptions::from_args();
-    let mut chars = read_file(String::new(), &opts.input[..]).unwrap();
+    let chars = read_file(String::new(), &opts.input[..]).unwrap();
     let pool = CpuPool::new_num_cpus();
     let pool2 = pool.clone();
     let results = pool.spawn_fn(move ||{ 
         expand_with_pool(pool2, Arc::new(default_scope()), chars)
-            .map(|x| { x.as_str().unwrap().into_string() })
+            .map(|x| { Rope::from_value(x).to_str().unwrap().into_string() })
     }).wait();
     match results {
         Ok(result) => { println!("{}", result); },

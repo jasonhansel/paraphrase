@@ -51,6 +51,9 @@ impl<'s> ArcSlice<'s> {
     }
     
    pub fn into_string(self) -> String {
+
+        return self.to_str().to_owned();
+
         let range = self.range.clone();
         let res = Arc::try_unwrap(self.string.into_owned())
             .map(|mut x| { x.split_off(range.end); x.split_off(range.start)   })
@@ -59,9 +62,10 @@ impl<'s> ArcSlice<'s> {
     }
 
     pub fn make_static(&mut self) -> ArcSlice<'static> {
-        return ArcSlice {
-            string: Cow::Owned(self.string.to_mut().clone()),
-            range: self.range.clone()
+		let &mut ArcSlice{ref mut string, ref mut range} = self;
+        ArcSlice {
+            string: Cow::Owned( (**string).clone() ),
+            range: range.clone()
         }
     }
 
@@ -81,7 +85,9 @@ impl<'s> ArcSlice<'s> {
     }
 
     fn split_at<'t>(&'t mut self, idx: usize) -> (ArcSlice<'s>) {
-        let left = ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
+        let mut left = ArcSlice::from_string(self.to_str().to_owned());
+        left.range = Range{ start: 0, end: idx};
+            // ArcSlice { string: self.string.clone(), range: Range { start: self.range.start, end: self.range.start+idx } };
         (*self).range.start += idx;
         left
     }

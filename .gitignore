@@ -1,3 +1,4 @@
 /target/
+test.pbm
 **/*.rs.bk
 **/*.swp
