@@ -112,16 +112,15 @@ impl<'c> Scope<'c> {
         self.commands.insert(parts, Command::Native(p));
     }
 
-    pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
+    pub fn add_user(&mut self, parts: Vec<CommandPart>,
                         params: Vec<ParamInfo>,
                         rope: Rope<'c>) {
-        let id = latest_tag.fetch_add(1, Ordering::SeqCst);
         let tag = Tag(latest_tag.fetch_add(1, Ordering::SeqCst));
-        this.commands
+        self.commands
             .insert(parts, Command::User(params, tag, rope));
     }
-    pub fn add_tag(mut this: &mut Scope<'c>, tag: Tag) {
-        this.commands.insert(vec![Ident("tag".to_owned()), Param], Command::Tagger(tag));
+    pub fn add_tag(&mut self, tag: Tag) {
+        self.commands.insert(vec![Ident("tag".to_owned()), Param], Command::Tagger(tag));
     }
     pub fn has_command(&self, parts: &[CommandPart]) -> bool {
         self.commands.contains_key(parts)
