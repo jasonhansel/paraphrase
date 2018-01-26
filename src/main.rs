@@ -15,8 +15,9 @@
 // NOTE: expanding from the right  === expanding greedily
 // TODO: improve perf. of PPM demo; currently concurrency *decreases* perf. (prob because of
 // evaluation-order or communication issues) -- much better with optimization on (~10x)
-// TODO: redirections &c.
-
+// TODO: redirections, includes, ...
+// TODO: add license, build instr.
+// TODO: fix failign test
 
 mod value;
 mod scope;
