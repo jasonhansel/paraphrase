@@ -1,3 +1,14 @@
+
+
+// The standard library: all built-in methods with a method for creating a scope containing them.
+// Future plans for this include:
+// - Add the ability to #include other files (*high priority*), as in C/m4/etc.
+// - Improve error handling (currently we just panic! on error)
+// - Add the ability to manipulate scopes in more sophisticated ways
+// - Add various functions for introspection, reflection, &c.
+// - Provide a standard library written in paraphrase to make programming easier
+// - Keep track of file locations (line & column), perhaps with support for source maps.
+
 use scope::*;
 use value::*;
 use value::Value::*;
@@ -18,13 +29,6 @@ fn get_args<'s>(mut args: Vec<Rope>) -> (Option<Value>,Option<Value>,Option<Valu
         ait.next(),
     )
 }
-
-// TODO: *Defining typesafe macros*
-// TODO: list stuff -- concatenate, build closure
-// TODO: allow defining 'constant' values
-// TODO: manipulating scopes
-// TODO: 'typeof' operator
-// TODO: file position, stack traces, etc.
 
 fn var_dump(args: Vec<Rope>) -> EvalResult {
     match get_args(args) { (Some(val), None, ..) => {
@@ -136,9 +140,6 @@ fn if_eq<'s>(args: Vec<Rope>) -> EvalResult {
     }
 }
 
-
-// FIXME: not working yet??
-
 fn if_eq_then<'s>(args: Vec<Rope>) -> EvalResult { 
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), Some(Closure(finally)), None,..) => {
@@ -191,11 +192,9 @@ fn define<'s>(args: Vec<Rope>) -> EvalResult {
         Some(Closure(ValueClosure(scope, closure_data))),
        Some(Closure(ValueClosure(other_scope, to_expand))), None, ..) => {
 
-            // TODO: custom arguments, more tests
             let mut parts = vec![];
             let mut params = vec![];
             let na_str = name_args;
-            // TODO actually *ensure* arguments rae of the correct types
             for part in na_str.to_str().split(' ') {
                 let name_tag : Vec<&str> = part.split(':').collect();
                 let name = name_tag[0];
@@ -265,7 +264,6 @@ fn rescope<'s>(args: Vec<Rope>) -> EvalResult {
     }
 }
 
-    //TODO handle EOF propelry
 pub fn default_scope() -> Scope {
     let mut scope = Scope::new('#');
     scope.add_native(vec![ Ident("define".to_owned()), Param, Param, Param ], define);

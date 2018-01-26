@@ -1,3 +1,11 @@
+
+// The parser and macroexpander itself.
+// Main TODOs here include:
+// - Improve performance & stability; provide more sensible error messages ("fail sooner").
+// - Allow the user to customize parsing (e.g. by changing the '#' sign to another character).
+//   A high priority since it is basically necessary for use in C.
+
+
 use scope::*;
 use value::*;
 use futures::future::{ok,join_all,loop_fn,Loop};
@@ -8,7 +16,6 @@ use rand;
 use std::panic::{UnwindSafe,AssertUnwindSafe};
 use std::any::Any;
 
-// TODO: clone() less
 
 #[derive(Clone,Debug,PartialEq,Eq)]
 enum ParseEntry {

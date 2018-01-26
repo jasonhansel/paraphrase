@@ -1,23 +1,22 @@
 
+
+// Various helper data types and associated trait implementations.
+// Main TODOs here include:
+// - Improve performance by avoiding clone()s as much as possible.
+// - Simplify things. This is far more complex than necessary.
+
 use std::fmt;
 use scope::Scope;
-use std::borrow::Cow;
-use std::collections::LinkedList;
 use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
-use std::marker::PhantomData;
 use std::ops::{Add,Index,IndexMut};
-use std::time::{Duration,Instant};
-use std::borrow::Borrow;
 
 use serde_json::Value as JValue;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Tag(pub usize);
 
-
-// should closures "know" about their parameters?
 #[derive(Clone)]
 pub struct ValueClosure(pub Arc<Scope>, pub Box<Rope>);
 
@@ -27,17 +26,11 @@ impl ValueClosure {
     }
 }
 
+// A slice of an atomically reference-counted string.
 pub struct ArcSlice {
     string: Arc<String>,
     range: Range<usize>
 }
-impl fmt::Debug for ArcSlice {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.to_str().fmt(f)
-    }
-}
-
-
 
 impl ArcSlice {
     pub fn from_string(s: String) -> ArcSlice {
@@ -96,6 +89,11 @@ impl ArcSlice {
     }
 }
 
+impl fmt::Debug for ArcSlice {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		self.to_str().fmt(f)
+	}
+}
 
 impl Add for ArcSlice {
     type Output = ArcSlice;
@@ -226,7 +224,7 @@ impl Rope {
 
 
     pub fn concat(mut self, mut other: Rope) -> Rope {
-		// TODO: merge strings
+		// TODO: merge strings together to improve perf.
         return Rope {
             data: {
                 let mut l = Vec::new();
@@ -292,10 +290,8 @@ impl Rope {
             panic!("Failure");
        }
     }
-        // may want to make this stuff iterative
     pub fn split_at<'r,F : FnMut(char) -> bool>(&'r mut self, match_val : bool, match_eof: bool, matcher: &mut F)
         ->  Option<Rope>  {
-        // TODO can optimize the below. would vecs be faster than linked lists?
         let mut prefix = Rope { data: Vec::new() };
         while !self.data.is_empty() {
             let front = self.data.pop().unwrap();

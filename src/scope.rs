@@ -1,4 +1,7 @@
 
+// Tools for managing scopes and commands.
+
+
 use value::*;
 use expand::*;
 use serde_json::Value as JValue;
