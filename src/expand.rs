@@ -271,7 +271,7 @@ fn parse<'f, 'r, 's : 'r>(
                 let chr = rope.split_char().unwrap();
                 if chr == scope.sigil {
                     let s = rope.split_at(false, true, &mut |chr : char| {
-                        if chr.is_alphabetic() || chr == '_' {
+                        if chr.is_alphabetic() || chr == '_' || chr.is_digit(10) {
                             false
                         } else {
                             true

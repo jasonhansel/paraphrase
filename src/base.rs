@@ -52,6 +52,7 @@ fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 }
 
 fn tail(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    println!("ARGS {:?}", args);
     match get_args(args) { (Some(List(ref the_list)), None, ..) => {
         Done(Value::List(the_list.clone().split_off(1)))
     } _ => {panic!()}}

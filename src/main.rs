@@ -20,6 +20,11 @@ mod scope;
 mod base;
 mod expand;
 
+extern crate structopt;
+#[macro_use]
+extern crate structopt_derive;
+
+use structopt::StructOpt;
 extern crate futures;
 extern crate futures_cpupool;
 extern crate rand;
@@ -44,6 +49,13 @@ fn read_file<'s>(mut string: String, path: &str) -> Result<Rope<'s>, Error> {
     Ok(Rope::from_slice(ArcSlice::from_string( string )))
 }
 
+#[derive(StructOpt,Debug)]
+#[structopt(name="paraphrase")]
+struct CLIOptions {
+    #[structopt(help="Input file")]
+    input: String
+}
+
 #[test]
 fn it_works() {
     // TODO: organize a real test suite
@@ -62,5 +74,16 @@ fn it_works() {
 
 fn main() {
     // TODO add a CLI
-    println!("Hello, world!");
+    let opts = CLIOptions::from_args();
+    let mut chars = read_file(String::new(), &opts.input[..]).unwrap();
+    let pool = CpuPool::new_num_cpus();
+    let pool2 = pool.clone();
+    let results = pool.spawn_fn(move ||{ 
+        expand_with_pool(pool2, Arc::new(default_scope()), chars)
+            .map(|x| { x.as_str().unwrap().into_string() })
+    }).wait();
+    match results {
+        Ok(result) => { println!("{}", result); },
+        Err(err) => { println!("{:?}", err); assert!(false); }
+    }
 }
