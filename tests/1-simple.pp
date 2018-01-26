@@ -90,6 +90,8 @@
 	(#untag{bool}(#bool(true)))
 	(1)
 
+
+
 #define(build_list :str){
 	#define(part_one)(#match_regex(#literal{^([^ ]+)( .*$|$)})(#str)){
 		#if_eq(#part_one)(#list()){
@@ -99,19 +101,30 @@
 				#list{}
 			}
 		}{
-			#define(colon)(#match_regex(^([^ :]+):(.+))(#head(#tail(#part_one))){
+			#define(colon)(#match_regex(^([^ :]+):(.+))(
+			#head(#tail(#part_one)))){
+				#if_eq(#colon)(#list()){
+				#define(ident)(#head(#part_one)){
+					#list(
+						#list()
+						#list()
+						#list(#literal(#ident))
+					)
+				}
+				}{
 				#define(listresult)(#build_list(#head(#tail(#tail(#part_one))))){
 				#define(list_params)(#head(#listresult)){
 				#define(list_types)(#head(#tail(#listresult))){
 				#define(pre_colon)(#head(#tail(#colon))){
 				#define(post_colon)(#head(#tail(#colon))){
 				#define(list_names)(#head(#tail(#tail(#listresult)))){
-					#list{
-						#join(#literal(x))(#list_params)
-						#join(#literal(#post_colon))(#list_types)
-						#join(#literal(:#pre_colon))(#list_names)
-					}
+					#list(
+						#join(#list(#literal(x)))(#list_params)
+						#join(#list(#literal(#post_colon)))(#list_types)
+						#join(#list(#literal(:#pre_colon)))(#list_names)
+					)
 				}}}}}}
+				}
 			}
 		}
 	}
@@ -126,7 +139,8 @@
 		#assert(test)(list_types)(1)
 		#assert(test)(list_names)(1)
 	}}}}
+	#expand(#rest)
 };
 
 #def(x y:bool){#y};
-#assert(#x(#bool(1)))(#bool(1))
+#assert(final)(#x(#bool(1)))(#bool(1))

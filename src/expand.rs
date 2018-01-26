@@ -202,9 +202,12 @@ impl<'s> Expander<'s> {
         }
     }
     fn print(&self) {
+        /*
+        println!("Instructions ===");
         for ref i in self.instr.iter() {
             println!("- {:?}", i);
         }
+        */
     }
 
     fn raw_param(&mut self, mut rope: Rope<'s>) {
@@ -254,7 +257,6 @@ fn parse<'f, 'r, 's : 'r>(
         ParseEntry::Command(mut parts) => {
             // TODO: multi-part commands, variadic macros (may never impl - too error prone)
             // TODO: breaks intermacro text
-            println!("CHECKING {:?} {:?} {:?}", parts, stack, rope);
             if scope.has_command(&parts) {
                 visitor.end_command(parts.split_off(0), scope.clone());
                 // continue to next work item
@@ -266,7 +268,6 @@ fn parse<'f, 'r, 's : 'r>(
                         return true;
                     }
                 });
-                println!("HERE {:?}", rope);
                 let chr = rope.split_char().unwrap();
                 if chr == scope.sigil {
                     let s = rope.split_at(false, true, &mut |chr : char| {
@@ -284,7 +285,7 @@ fn parse<'f, 'r, 's : 'r>(
                     stack.push(ParseEntry::Command(parts));
                     stack.push(ParseEntry::Text(0, true));
                 } else if chr == ')' {
-
+                    // TODO: error out if parens are over
                     visitor.end_paren();
                     parts.push(Param);
                     stack.push(ParseEntry::Command(parts));

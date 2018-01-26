@@ -21,7 +21,7 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
         ait.next(),
     )
 }
-// TODO: creating, removing, handling tagged values
+// TODO: *Defining typesafe macros*
 // TODO: list stuff -- concatenate, build closure
 // TODO: allow defining 'constant' values
 // TODO: manipulating scopes
@@ -47,6 +47,7 @@ fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 }
 
 fn head(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    println!("ARGS {:?}", args);
     match get_args(args) { (Some(List(the_list)), None, ..) => {
         Done(the_list.into_iter().next().unwrap())
     } _ => {panic!()}}
@@ -171,7 +172,7 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(Str(name_args)),
         Some(Closure(ValueClosure(scope, closure_data))),
-       Some(Closure(ValueClosure(_, to_expand))), None, ..) => {
+       Some(Closure(ValueClosure(other_scope, to_expand))), None, ..) => {
 
             // TODO: custom arguments, more tests
             let mut parts = vec![];
@@ -185,9 +186,20 @@ fn define<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
                     parts.push(Ident(part.to_owned()));
                 }
             }
-            let mut new_scope = dup_scope(&scope);
-            Scope::add_user(&mut new_scope, parts, params, *closure_data);
-            Expand(Arc::new(new_scope), *to_expand)
+
+
+            if !Arc::ptr_eq(&scope, &other_scope) {
+                // NEEDED e.g. for semi part_done stuff?
+                let mut new_scope = dup_scope(&scope);
+                Scope::add_user(&mut new_scope, parts.clone(), params.clone(), (*closure_data).clone());
+                let mut new_other_scope = dup_scope(&other_scope);
+                Scope::add_user(&mut new_other_scope, parts, params, *closure_data);
+                Expand(Arc::new(new_other_scope), *to_expand)
+            } else {
+                let mut new_scope = dup_scope(&scope);
+                Scope::add_user(&mut new_scope, parts, params, *closure_data);
+                Expand(Arc::new(new_scope), *to_expand)
+            }
         },
         (Some(Str(name_args)),
         Some(imm_value),
