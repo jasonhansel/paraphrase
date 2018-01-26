@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::ops::{Add,Index,IndexMut};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Tag(u64);
+pub struct Tag(pub usize);
 
 
 // should closures "know" about their parameters?

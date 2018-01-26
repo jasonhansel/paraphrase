@@ -160,13 +160,7 @@ impl<'s> Expander<'s> {
                 join_all(vec).map(move |args| {
                     eval(scope2, cmd, args)
                 }));
- /*               .and_then(move |args| { 
-                    match eval(scope2, cmd, args) {
-                        EvalResult::Expand(s, mut r) => expand_with_pool(pool2, s, r.make_static()),
-                        EvalResult::Done(v) => Box::new(ok(v))
-                    }
-                })
-                .map(Rope::from_value); */
+
             return r as Fut<EvalResult<'static>>
         }))
     }

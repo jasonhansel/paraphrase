@@ -26,6 +26,16 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
 // TODO: allow defining 'constant' values
 // TODO: manipulating scopes
 // TODO: 'typeof' operator
+fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
+    match get_args(args) { (Some(Closure(ValueClosure(scope, tag_name))),
+        Some(Tagged(tag_id, tagged)), None, ..) => {
+        // TODO: allow multiple parameters here
+        let cmd_vec = vec![Ident( tag_name.to_str().unwrap().into_string() )];
+        let correct_id = scope.get_tag(cmd_vec).unwrap();
+        if correct_id != tag_id { panic!() }
+        Done(*tagged)
+    } _ => {panic!()}}
+}
 
 fn join(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(List(list_a)), Some(List(list_b)), None, ..) => {
@@ -238,6 +248,7 @@ pub fn default_scope<'c>() -> Scope<'c> {
     scope.add_native(vec![ Ident("head".to_owned()), Param ], head); 
     scope.add_native(vec![ Ident("tail".to_owned()), Param ], tail); 
     scope.add_native(vec![ Ident("join".to_owned()), Param, Param ], join); 
+    scope.add_native(vec![ Ident("untag".to_owned()), Param, Param ], untag); 
 
     scope
 }

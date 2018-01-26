@@ -4,17 +4,20 @@ use expand::*;
 
 use std::collections::HashMap;
 use std::fmt::{Debug,Formatter,Result};
-use std::mem::replace;
-use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize,Ordering};
+
+
+static latest_tag : AtomicUsize = AtomicUsize::new(0);
 
 pub use std::sync::Arc;
-type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
+pub type NativeFn = for<'s> fn(Vec<Rope<'static>>) -> EvalResult<'static>;
 
 #[derive(Clone)]
 enum Command<'c> {
     Native(NativeFn),
     InOther(Arc<Scope<'c>>),
-    User(Vec<String>, Rope<'c>)
+    User(Vec<String>, Tag, Rope<'c>),
+    Tagger(Tag)
 }
 
 use self::Command::*;
@@ -23,7 +26,8 @@ impl<'c> Debug for Command<'c> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             &Native(_) => { write!(f, "[native code]") },
-            &User(ref s, ref v) => { write!(f, "params (")?; s.fmt(f)?; write!(f, ") in "); v.fmt(f) },
+            &Tagger(t) => { write!(f, "[tagger {:?}]", t.0) },
+            &User(ref s, _, ref v) => { write!(f, "params (")?; s.fmt(f)?; write!(f, ") in "); v.fmt(f) },
             &InOther(_) => { write!(f, "reference to other scope") }
         }
     }
@@ -75,12 +79,26 @@ impl<'c> Scope<'c> {
     pub fn add_user(mut this: &mut Scope<'c>, parts: Vec<CommandPart>,
                         params: Vec<String>,
                         rope: Rope<'c>) {
+        let id = latest_tag.fetch_add(1, Ordering::SeqCst);
+        let tag = Tag(latest_tag.fetch_add(1, Ordering::SeqCst));
         this.commands
-            .insert(parts, Command::User(params, rope));
+            .insert(parts, Command::User(params, tag, rope));
     }
-
+    pub fn add_tag(mut this: &mut Scope<'c>, tag: Tag) {
+        this.commands.insert(vec![Ident("tag".to_owned()), Param], Command::Tagger(tag));
+    }
     pub fn has_command(&self, parts: &[CommandPart]) -> bool {
         self.commands.contains_key(parts)
+    }
+
+    pub fn get_tag(&self, mut parts: Vec<CommandPart>) -> Option<Tag> { 
+        while !self.has_command(&parts[..]) {
+            parts.push(Param);
+        }
+        match self.commands.get(&parts[..]) {
+            Some(&User(_, tag, _)) => Some(tag),
+            _ => None
+        }
     }
 }
 
@@ -111,15 +129,20 @@ pub enum EvalResult<'v> {
 }
 use EvalResult::*;
 
-pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, args: Vec<Rope<'v>>) -> EvalResult<'v> {
+
+pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, mut args: Vec<Rope<'v>>) -> EvalResult<'v> {
     match cmd_scope.clone().commands.get(&command).unwrap() {
          &Command::InOther(ref other_scope) => {
             eval( other_scope.clone(), command, args)
          },
          &Command::Native(ref code) => {
              code(args.into_iter().map(|mut x| { x.make_static() }).collect())
+         }, 
+         &Command::Tagger(tag) => {
+             let val = args.into_iter().next().unwrap().coerce();
+             Done(Value::Tagged(tag, Box::new(val)))
          },
-         &Command::User(ref arg_names, ref contents) => {
+         &Command::User(ref arg_names, tag, ref contents) => {
              // todo handle args
              //clone() scope?
              let mut new_scope = dup_scope(&cmd_scope);
@@ -137,6 +160,7 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, a
                     Rope::from_value(arg.coerce()).make_static()
                 );
              }
+             Scope::add_tag(&mut new_scope, tag);
              Expand(Arc::new(new_scope), contents.clone().make_static())
          }
      }

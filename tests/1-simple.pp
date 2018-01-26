@@ -73,3 +73,19 @@
 #assert(join)
 	(#list( #literal{Welcome} #literal{2} #literal{3} ))
 	(#join(#my_list)(#list(#literal{2} #literal{3})))
+
+#define(bool :str){
+	#if_eq(#str)(true){
+		#tag(1)
+	}{
+		#tag(0)
+	}
+};
+
+#assert(type)
+	(#bool(true))
+	(#bool(true))
+
+#assert(type removal)
+	(#untag{bool}(#bool(true)))
+	(1)
