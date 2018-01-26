@@ -5,8 +5,8 @@ use futures::prelude::*;
 use futures_cpupool::*;
 use futures::stream;
 use rand;
-use std::panic::UnwindSafe;
-
+use std::panic::{UnwindSafe,AssertUnwindSafe};
+use std::any::Any;
 
 // TODO: clone() less
 
@@ -63,7 +63,7 @@ impl UnfinishedParse {
     }
 }
 
-pub type Fut<T> = Box<Future<Item=T,Error=()> + Send>;
+pub type Fut<T> = Box<Future<Item=T,Error=Box<Any+Send>> + Send>;
 
 struct Expander<'s> {
     calls: Vec<u16>,
@@ -377,7 +377,8 @@ pub fn expand_with_pool<'f>(
     // TODO: why do we need a new CPUPOOL here:
     let id = rand::random::<u64>();
     let ipool = pool.clone();
-    Box::new(
+    Box::new(AssertUnwindSafe(
+        (AssertUnwindSafe(Box::new(
         loop_fn(( (vec![] as Vec<Fut<Rope<'static>>>), _scope, _rope), move |(mut joins, mut scope, mut rope)| {
             let UnfinishedParse {parens, calls, stack, instr} = Arc::make_mut(&mut scope).part_done.take().unwrap_or_else(|| {
                 UnfinishedParse {
@@ -409,7 +410,7 @@ pub fn expand_with_pool<'f>(
                 Box::new(ok(Loop::Break(joins))) as Fut<Loop<_,_>>
             }
         })
-        .and_then(|joins| { join_all(joins) })
+        .and_then(|joins| { join_all(joins)  })
         .map(move |joins : Vec<_>| {
             let mut vec : Vec<Rope<'static>> = vec![];
             for j in joins {
@@ -420,6 +421,9 @@ pub fn expand_with_pool<'f>(
             let resc = res.coerce();
             resc
         })
-    )
+        ) as Box<Future<Item=Value<'static>,Error=Box<Any+Send>>+Send> ))
+        .catch_unwind()
+        .map(|res| { res.unwrap() })
+    ))
 }
 

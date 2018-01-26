@@ -53,10 +53,11 @@ fn it_works() {
     let results = pool.spawn_fn(move ||{ 
         expand_with_pool(pool2, Arc::new(default_scope()), chars)
             .map(|x| { x.as_str().unwrap().into_string() })
-    }).wait().unwrap();
-    assert!(true);
-    assert!(true);
-    println!("||\n{}||", results);
+    }).wait();
+    match results {
+        Ok(result) => { println!("{}", result); },
+        Err(err) => { println!("{:?}", err); assert!(false); }
+    }
 }
 
 fn main() {

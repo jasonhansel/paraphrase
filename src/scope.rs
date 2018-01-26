@@ -130,11 +130,14 @@ impl<'c> Scope<'c> {
 
     pub fn get_tag(&self, ident: &str) -> Option<Tag> { 
         let mut parts = vec![ Ident(ident.to_owned()) ];
-        while !self.has_command(&parts[..]) {
+        // TODO: make this less inefficient
+        while !self.has_command(&parts[..]) && parts.len() < 20 {
+            println!("CHECKING {:?}", parts);
             parts.push(Param);
         }
         match self.commands.get(&parts[..]) {
             Some(&User(_, tag, _)) => Some(tag),
+            Some(&InOther(ref s)) => { s.get_tag(ident) },
             _ => None
         }
     }
@@ -192,12 +195,19 @@ pub fn eval<'c, 'v>(cmd_scope: Arc<Scope<'static>>, command: Vec<CommandPart>, m
                  // should it always take no arguments?
                  // sometimes it shouldn't be a <Vec>, at least (rather, it should be e.g. a closure
                  // or a Tagged). coerce sometimes?
-                Scope::add_user(
-                    &mut new_scope,
-                    vec![Ident(name.to_owned())],
-                    vec![],
-                    Rope::from_value(kind.match_rope(args.pop().unwrap()).unwrap()).make_static()
-                );
+                match kind.match_rope(args.pop().unwrap()) {
+                    Some(value) => {
+                        Scope::add_user(
+                            &mut new_scope,
+                            vec![Ident(name.to_owned())],
+                            vec![],
+                            Rope::from_value(value).make_static()
+                        );
+                    },
+                    None => {
+                        panic!("Error: expected {:?}", kind);
+                    }
+                }
              }
              Scope::add_tag(&mut new_scope, tag);
              Expand(Arc::new(new_scope), contents.clone().make_static())

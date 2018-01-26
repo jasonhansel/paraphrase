@@ -88,8 +88,8 @@
 
 #define(str_of_list l:list){
 	#if_eq(#l)(#list()){}
-		{#head(l) #str_of_list(#tail(l))}
-}
+		{#head(#l) #str_of_list(#tail(#l))}
+};
 
 #assert(type)
 	(#bool(true))
@@ -104,5 +104,5 @@
 	(#str_of_bool(#bool(true)) #str_of_bool(#bool(false)))
 
 #assert(str_of_list)
-	(a b c)
-	(#str_of_list(#literal{a} #literal{b} #literal{c}))
+	(a b c )
+	(#str_of_list(#list(#literal{a} #literal{b} #literal{c})))

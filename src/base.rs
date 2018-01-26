@@ -18,6 +18,7 @@ fn get_args<'s>(mut args: Vec<Rope<'static>>) -> (Option<Value>,Option<Value>,Op
         ait.next(),
     )
 }
+
 // TODO: *Defining typesafe macros*
 // TODO: list stuff -- concatenate, build closure
 // TODO: allow defining 'constant' values
@@ -27,6 +28,7 @@ fn untag(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) { (Some(Closure(ValueClosure(scope, tag_name))),
         Some(Tagged(tag_id, tagged)), None, ..) => {
         // TODO: allow multiple parameters here
+        println!("TEST {:?}", scope);
         let correct_id = scope.get_tag(tag_name.to_str().unwrap().to_str()).unwrap();
         if correct_id != tag_id { panic!() }
         Done(*tagged)
@@ -122,6 +124,7 @@ fn change_char<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
 fn if_eq<'s>(args: Vec<Rope<'static>>) -> EvalResult<'static> {
     match get_args(args) {
         (Some(value_a), Some(value_b), Some(Closure(if_true)), Some(Closure(if_false)), None, ..) => {
+            println!("TESTING {:?} {:?}", value_a, value_b);
             let mut todo = if value_a == value_b { if_true } else { if_false };
             Expand(todo.0, *(todo.1))
         },
